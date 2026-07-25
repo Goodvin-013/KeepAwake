@@ -1,0 +1,21 @@
+# Local backup copies
+*.backup-*
+*.bak
+
+# Runtime logs
+KeepAwake-error.log
+*.log
+
+# Windows shortcuts and metadata
+*.lnk
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+
+# Editor settings
+.vscode/
+.idea/
+.vs/
