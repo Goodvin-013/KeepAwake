@@ -254,8 +254,10 @@ function Stop-KeepAwakeTimer {
 function Start-KeepAwakeTimer {
     param(
         [Parameter(Mandatory)]
-        [ValidateRange(1, 10)]
-        [int] $Hours
+        [ValidateSet(30, 60, 120, 180, 240, 360, 480, 600)]
+        [int] $Minutes,
+
+        [switch] $SuppressNotification
     )
 
     $enabled = Set-KeepAwakeState `
@@ -266,28 +268,38 @@ function Start-KeepAwakeTimer {
         return $false
     }
 
-    $script:TimerDeadline = [DateTime]::Now.AddHours($Hours)
+    $script:TimerDeadline = [DateTime]::Now.AddMinutes($Minutes)
     $script:TimerRunning = $true
 
     $script:CountdownTimer.Start()
     Update-KeepAwakeInterface
 
-    $hourWord = 'часов'
+    if ($Minutes -eq 30) {
+        $durationText = '30 минут'
+    }
+    else {
+        $hours = [int] ($Minutes / 60)
+        $hourWord = 'часов'
 
-    if ($Hours -eq 1) {
-        $hourWord = 'час'
+        if ($hours -eq 1) {
+            $hourWord = 'час'
+        }
+
+        if ($hours -ge 2 -and $hours -le 4) {
+            $hourWord = 'часа'
+        }
+
+        $durationText = "$hours $hourWord"
     }
 
-    if ($Hours -ge 2 -and $Hours -le 4) {
-        $hourWord = 'часа'
+    if (-not $SuppressNotification) {
+        $endTime = $script:TimerDeadline.ToString('HH:mm:ss')
+
+        Show-KeepAwakeNotification (
+            "Запрет сна включён на $durationText. " +
+            "Автоотключение в $endTime."
+        )
     }
-
-    $endTime = $script:TimerDeadline.ToString('HH:mm:ss')
-
-    Show-KeepAwakeNotification (
-        "Запрет сна включён на $Hours $hourWord. " +
-        "Автоотключение в $endTime."
-    )
 
     return $true
 }
@@ -339,30 +351,31 @@ $script:TimerMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new(
     'Автоотключение'
 )
 
-for ($hours = 1; $hours -le 10; $hours++) {
-    $hourWord = 'часов'
+$timerOptions = @(
+    [pscustomobject]@{ Minutes = 30;  Label = 'Через 30 минут' },
+    [pscustomobject]@{ Minutes = 60;  Label = 'Через 1 час' },
+    [pscustomobject]@{ Minutes = 120; Label = 'Через 2 часа' },
+    [pscustomobject]@{ Minutes = 180; Label = 'Через 3 часа' },
+    [pscustomobject]@{ Minutes = 240; Label = 'Через 4 часа' },
+    [pscustomobject]@{ Minutes = 360; Label = 'Через 6 часов' },
+    [pscustomobject]@{ Minutes = 480; Label = 'Через 8 часов' },
+    [pscustomobject]@{ Minutes = 600; Label = 'Через 10 часов' }
+)
 
-    if ($hours -eq 1) {
-        $hourWord = 'час'
-    }
-
-    if ($hours -ge 2 -and $hours -le 4) {
-        $hourWord = 'часа'
-    }
-
+foreach ($timerOption in $timerOptions) {
     $timerChoice = [System.Windows.Forms.ToolStripMenuItem]::new(
-        "Через $hours $hourWord"
+        $timerOption.Label
     )
 
-    $timerChoice.Tag = $hours
+    $timerChoice.Tag = $timerOption.Minutes
 
     $timerChoice.add_Click({
         param($sender, $eventArgs)
 
-        $selectedHours = [int] $sender.Tag
+        $selectedMinutes = [int] $sender.Tag
 
         [void] (
-            Start-KeepAwakeTimer -Hours $selectedHours
+            Start-KeepAwakeTimer -Minutes $selectedMinutes
         )
     })
 
@@ -443,7 +456,14 @@ $exitItem.add_Click({
 })
 
 Update-KeepAwakeInterface
-Show-KeepAwakeNotification 'Программа запущена. Сейчас сон разрешён.'
+
+# Ручной запуск программы означает временный запрет автоматического сна.
+# По умолчанию используем максимальный безопасный интервал — 10 часов.
+[void] (
+    Start-KeepAwakeTimer `
+        -Minutes 600 `
+        -SuppressNotification
+)
 
 try {
     [System.Windows.Forms.Application]::Run($appContext)
