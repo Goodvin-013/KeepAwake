@@ -46,7 +46,7 @@ constexpr UINT kCountdownIntervalMs = 500;
 // При ручном запуске запрет сна включается на 10 часов.
 constexpr int kStartupMinutes = 600;
 
-constexpr int kTimerMinutes[] = { 30, 60, 120, 180, 240, 360, 480, 600 };
+constexpr int kTimerMinutes[] = { 30, 60, 120, 180, 240, 360, 480, 600, 1200 };
 constexpr int kTimerCount = sizeof(kTimerMinutes) / sizeof(kTimerMinutes[0]);
 
 enum CommandId : UINT {
