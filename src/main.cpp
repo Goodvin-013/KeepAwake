@@ -23,6 +23,7 @@
 #include <shellapi.h>
 #include <commctrl.h>
 #include <wchar.h>
+#include <strsafe.h>
 
 #include "resource.h"
 
@@ -218,7 +219,7 @@ void SaveLanguage(Lang lang) {
 
 void FormatDuration(int minutes, wchar_t* out, size_t outCount) {
     if (minutes < 60) {
-        swprintf(out, outCount,
+        StringCchPrintfW(out, outCount,
                  g_lang == LANG_RU_UI ? L"%d минут" : L"%d minutes", minutes);
         return;
     }
@@ -226,7 +227,7 @@ void FormatDuration(int minutes, wchar_t* out, size_t outCount) {
     const int hours = minutes / 60;
 
     if (g_lang == LANG_EN_UI) {
-        swprintf(out, outCount, hours == 1 ? L"%d hour" : L"%d hours", hours);
+        StringCchPrintfW(out, outCount, hours == 1 ? L"%d hour" : L"%d hours", hours);
         return;
     }
 
@@ -234,7 +235,7 @@ void FormatDuration(int minutes, wchar_t* out, size_t outCount) {
     if (hours == 1) word = L"час";
     else if (hours >= 2 && hours <= 4) word = L"часа";
 
-    swprintf(out, outCount, L"%d %ls", hours, word);
+    StringCchPrintfW(out, outCount, L"%d %ls", hours, word);
 }
 
 // Оставшееся время в формате часы:минуты:секунды.
@@ -244,7 +245,7 @@ void FormatRemaining(ULONGLONG remainingMs, wchar_t* out, size_t outCount) {
     const unsigned minutes = static_cast<unsigned>((totalSeconds % 3600) / 60);
     const unsigned seconds = static_cast<unsigned>(totalSeconds % 60);
 
-    swprintf(out, outCount, L"%02u:%02u:%02u", hours, minutes, seconds);
+    StringCchPrintfW(out, outCount, L"%02u:%02u:%02u", hours, minutes, seconds);
 }
 
 // Время окончания таймера по часам Windows, например 23:15:00.
@@ -267,7 +268,7 @@ void FormatEndTime(int minutes, wchar_t* out, int outCount) {
 
     if (GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &end, L"HH':'mm':'ss",
                         out, outCount) == 0) {
-        swprintf(out, static_cast<size_t>(outCount), L"%02u:%02u:%02u",
+        StringCchPrintfW(out, static_cast<size_t>(outCount), L"%02u:%02u:%02u",
                  end.wHour, end.wMinute, end.wSecond);
     }
 }
@@ -281,10 +282,9 @@ void TimerStatusText(wchar_t* out, size_t outCount) {
     if (g_timerRunning) {
         wchar_t countdown[32];
         FormatRemaining(RemainingMs(), countdown, 32);
-        swprintf(out, outCount, Str(S_TIMER_FMT), countdown);
+        StringCchPrintfW(out, outCount, Str(S_TIMER_FMT), countdown);
     } else {
-        wcsncpy(out, Str(g_awake ? S_TIMER_UNLIMITED : S_TIMER_NONE), outCount - 1);
-        out[outCount - 1] = L'\0';
+        StringCchCopyW(out, outCount, Str(g_awake ? S_TIMER_UNLIMITED : S_TIMER_NONE));
     }
 }
 
@@ -320,10 +320,9 @@ void FillTip(wchar_t* out, size_t outCount) {
     if (g_awake && g_timerRunning) {
         wchar_t countdown[32];
         FormatRemaining(RemainingMs(), countdown, 32);
-        swprintf(out, outCount, Str(S_TIP_COUNTDOWN_FMT), countdown);
+        StringCchPrintfW(out, outCount, Str(S_TIP_COUNTDOWN_FMT), countdown);
     } else {
-        wcsncpy(out, Str(g_awake ? S_TIP_ON : S_TIP_OFF), outCount - 1);
-        out[outCount - 1] = L'\0';
+        StringCchCopyW(out, outCount, Str(g_awake ? S_TIP_ON : S_TIP_OFF));
     }
 }
 
@@ -352,8 +351,8 @@ void UpdateTrayIcon() {
 
 void ShowNotification(const wchar_t* text) {
     NOTIFYICONDATAW nid = MakeNotifyData(NIF_INFO);
-    wcsncpy(nid.szInfoTitle, L"KeepAwake", ARRAYSIZE(nid.szInfoTitle) - 1);
-    wcsncpy(nid.szInfo, text, ARRAYSIZE(nid.szInfo) - 1);
+    StringCchCopyW(nid.szInfoTitle, ARRAYSIZE(nid.szInfoTitle), L"KeepAwake");
+    StringCchCopyW(nid.szInfo, ARRAYSIZE(nid.szInfo), text);
     nid.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
@@ -474,7 +473,7 @@ void StartTimer(int minutes, bool notify) {
 
         FormatDuration(minutes, duration, ARRAYSIZE(duration));
         FormatEndTime(minutes, endTime, ARRAYSIZE(endTime));
-        swprintf(text, ARRAYSIZE(text), Str(S_NOTIFY_TIMER_START_FMT), duration, endTime);
+        StringCchPrintfW(text, ARRAYSIZE(text), Str(S_NOTIFY_TIMER_START_FMT), duration, endTime);
         ShowNotification(text);
     }
 }
@@ -534,7 +533,7 @@ HMENU BuildMenu() {
     for (int i = 0; i < kTimerCount; ++i) {
         wchar_t duration[32];
         FormatDuration(kTimerMinutes[i], duration, ARRAYSIZE(duration));
-        swprintf(text, ARRAYSIZE(text), Str(S_AFTER_FMT), duration);
+        StringCchPrintfW(text, ARRAYSIZE(text), Str(S_AFTER_FMT), duration);
         AppendMenuW(timerMenu, MF_STRING, ID_TIMER_FIRST + i, text);
     }
     AppendMenuW(timerMenu, MF_SEPARATOR, 0, nullptr);
