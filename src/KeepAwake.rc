@@ -1,8 +1,8 @@
 #include <winres.h>
 #include "resource.h"
 
-IDI_KEEPAWAKE_OFF ICON "icons/KeepAwake-Off.ico"
 IDI_KEEPAWAKE_ON  ICON "icons/KeepAwake-On.ico"
+IDI_KEEPAWAKE_OFF ICON "icons/KeepAwake-Off.ico"
 
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "KeepAwake.manifest"
 

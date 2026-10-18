@@ -6,6 +6,7 @@
 #define KA_VERSION_PATCH 0
 #define KA_VERSION_STRING "2.0.0"
 
-// Иконки. Первая по номеру иконка становится иконкой exe в Проводнике.
-#define IDI_KEEPAWAKE_OFF 101
-#define IDI_KEEPAWAKE_ON  102
+// Иконки. Первая по номеру иконка становится иконкой exe в Проводнике
+// и на ярлыке, поэтому первой идёт зелёная иконка с открытым глазом.
+#define IDI_KEEPAWAKE_ON  101
+#define IDI_KEEPAWAKE_OFF 102
