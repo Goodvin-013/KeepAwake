@@ -654,10 +654,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_ENDSESSION:
-        if (wParam) {
-            ReleaseAwake();
-            RemoveTrayIcon();
-        }
+        // Выход из Windows или установщик просит закрыть программу.
+        if (wParam) DestroyWindow(hwnd);
         return 0;
 
     case WM_DESTROY:

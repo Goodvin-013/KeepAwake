@@ -27,16 +27,25 @@ KeepAwake не добавляется в автозагрузку.
 
 ## Установка
 
-1. Скачайте `KeepAwake.exe` со страницы
-   [Releases](https://github.com/Goodvin-013/KeepAwake/releases).
-2. Положите его в любую папку и запустите.
+На странице [Releases](https://github.com/Goodvin-013/KeepAwake/releases)
+есть два файла:
 
-При первом запуске Windows может показать окно SmartScreen, потому что файл
-не подписан. Нажмите «Подробнее», затем «Выполнить в любом случае».
+- **`KeepAwake-Setup.exe`** — установщик. Ставит программу в
+  `%LOCALAPPDATA%\Programs\KeepAwake`, создаёт ярлык на рабочем столе и
+  добавляет удаление в «Параметры → Приложения». Права администратора не нужны.
+- **`KeepAwake.exe`** — сама программа без установки: положите в любую папку
+  и запустите.
 
-Чтобы удалить программу, закройте её через меню в трее и удалите exe.
-Если вы выбирали язык вручную, удалите также раздел реестра
-`HKEY_CURRENT_USER\Software\KeepAwake`.
+При первом запуске Windows может показать окно SmartScreen, потому что файлы
+не подписаны. Нажмите «Подробнее», затем «Выполнить в любом случае».
+
+Удаление:
+
+- если ставили установщиком — через «Параметры → Приложения → KeepAwake»;
+  сохранённый выбор языка удаляется вместе с программой;
+- если без установки — закройте программу через меню в трее и удалите exe.
+  Если вы выбирали язык вручную, удалите также раздел реестра
+  `HKEY_CURRENT_USER\Software\KeepAwake`.
 
 ## Использование
 
@@ -94,6 +103,15 @@ cmake --build build --config Release
 
 Готовый файл: `build\Release\KeepAwake.exe`.
 
+Установщик собирается [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+после сборки exe:
+
+```powershell
+iscc /DAppVersion=2.0.0 installer\KeepAwake.iss
+```
+
+Готовый файл: `build\installer\KeepAwake-Setup.exe`.
+
 Сборка через MinGW-w64 тоже поддерживается.
 
 ## Релиз
@@ -109,7 +127,8 @@ cmake --build build --config Release
    git push origin v2.0.0
    ```
 
-GitHub соберёт `KeepAwake.exe` и опубликует его на странице Releases.
+GitHub соберёт `KeepAwake.exe` и `KeepAwake-Setup.exe` и опубликует их
+на странице Releases.
 Если тег не совпадает с версией в `src/resource.h`, сборка остановится
 с ошибкой.
 
@@ -122,6 +141,7 @@ src/KeepAwake.rc        иконки, манифест и сведения о в
 src/KeepAwake.manifest  DPI, Common Controls, запуск без прав администратора
 src/icons/              иконки обычного и активного режима
 src/icons/source/       исходники иконок в SVG (*_small — для 16 и 20 px)
+installer/KeepAwake.iss сценарий установщика (Inno Setup)
 CMakeLists.txt          проект сборки
 .github/workflows/      сборка и публикация релиза
 ```
