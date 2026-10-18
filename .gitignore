@@ -1,21 +1,14 @@
-# Local backup copies
-*.backup-*
-*.bak
+# Сборка
+build/
+out/
+cmake-build-*/
 
-# Runtime logs
-KeepAwake-error.log
-*.log
-
-# Windows shortcuts and metadata
-*.lnk
-Thumbs.db
-Desktop.ini
-
-# Temporary files
-*.tmp
-*.temp
-
-# Editor settings
+# Visual Studio и редакторы
+.vs/
 .vscode/
 .idea/
-.vs/
+*.user
+
+# Windows
+Thumbs.db
+Desktop.ini
