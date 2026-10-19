@@ -414,6 +414,8 @@ bool ApplyAwakeState(bool enable) {
     }
 
     g_awake = enable;
+    // Галочка «Не выключать экран» действует только во время запрета сна.
+    if (!enable) g_keepDisplay = false;
     UpdateTrayIcon();
     return true;
 }
@@ -491,10 +493,13 @@ void OnCountdownTick() {
 }
 
 void ToggleKeepDisplay() {
+    // Пункт доступен только во время запрета сна.
+    if (!g_awake) return;
+
     g_keepDisplay = !g_keepDisplay;
 
-    // Если запрет сна уже включён, сразу передаём Windows новые флаги.
-    if (g_awake && !ApplyAwakeState(true)) {
+    // Сразу передаём Windows новые флаги.
+    if (!ApplyAwakeState(true)) {
         g_keepDisplay = !g_keepDisplay;
     }
 }
@@ -526,7 +531,8 @@ HMENU BuildMenu() {
 
     AppendMenuW(menu, MF_STRING | (g_awake ? MF_GRAYED : 0), ID_ENABLE, Str(S_ENABLE));
     AppendMenuW(menu, MF_STRING | (g_awake ? 0 : MF_GRAYED), ID_DISABLE, Str(S_DISABLE));
-    AppendMenuW(menu, MF_STRING | (g_keepDisplay ? MF_CHECKED : 0), ID_KEEP_DISPLAY,
+    AppendMenuW(menu, MF_STRING | (g_awake ? 0 : MF_GRAYED) | (g_keepDisplay ? MF_CHECKED : 0),
+                ID_KEEP_DISPLAY,
                 Str(S_KEEP_DISPLAY));
 
     HMENU timerMenu = CreatePopupMenu();
