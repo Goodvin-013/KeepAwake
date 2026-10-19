@@ -50,6 +50,7 @@ constexpr int kTimerMinutes[] = { 30, 60, 120, 180, 240, 360, 480, 600, 1200 };
 constexpr int kTimerCount = sizeof(kTimerMinutes) / sizeof(kTimerMinutes[0]);
 
 enum CommandId : UINT {
+    ID_VERSION = 999,
     ID_STATUS = 1000,
     ID_TIMER_STATUS,
     ID_ENABLE,
@@ -520,6 +521,10 @@ void ToggleAwake() {
 HMENU BuildMenu() {
     HMENU menu = CreatePopupMenu();
     wchar_t text[128];
+
+    // Название и версия программы, чтобы было видно, какая версия запущена.
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_STATUS,
                 Str(g_awake ? S_STATUS_ON : S_STATUS_OFF));
