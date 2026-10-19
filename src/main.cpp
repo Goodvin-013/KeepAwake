@@ -50,6 +50,7 @@ constexpr int kTimerMinutes[] = { 30, 60, 120, 180, 240, 360, 480, 600, 1200 };
 constexpr int kTimerCount = sizeof(kTimerMinutes) / sizeof(kTimerMinutes[0]);
 
 enum CommandId : UINT {
+    ID_VERSION = 999,
     ID_STATUS = 1000,
     ID_TIMER_STATUS,
     ID_ENABLE,
@@ -414,6 +415,8 @@ bool ApplyAwakeState(bool enable) {
     }
 
     g_awake = enable;
+    // Галочка «Не выключать экран» действует только во время запрета сна.
+    if (!enable) g_keepDisplay = false;
     UpdateTrayIcon();
     return true;
 }
@@ -491,10 +494,13 @@ void OnCountdownTick() {
 }
 
 void ToggleKeepDisplay() {
+    // Пункт доступен только во время запрета сна.
+    if (!g_awake) return;
+
     g_keepDisplay = !g_keepDisplay;
 
-    // Если запрет сна уже включён, сразу передаём Windows новые флаги.
-    if (g_awake && !ApplyAwakeState(true)) {
+    // Сразу передаём Windows новые флаги.
+    if (!ApplyAwakeState(true)) {
         g_keepDisplay = !g_keepDisplay;
     }
 }
@@ -516,6 +522,10 @@ HMENU BuildMenu() {
     HMENU menu = CreatePopupMenu();
     wchar_t text[128];
 
+    // Название и версия программы, чтобы было видно, какая версия запущена.
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
     AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_STATUS,
                 Str(g_awake ? S_STATUS_ON : S_STATUS_OFF));
 
@@ -526,7 +536,8 @@ HMENU BuildMenu() {
 
     AppendMenuW(menu, MF_STRING | (g_awake ? MF_GRAYED : 0), ID_ENABLE, Str(S_ENABLE));
     AppendMenuW(menu, MF_STRING | (g_awake ? 0 : MF_GRAYED), ID_DISABLE, Str(S_DISABLE));
-    AppendMenuW(menu, MF_STRING | (g_keepDisplay ? MF_CHECKED : 0), ID_KEEP_DISPLAY,
+    AppendMenuW(menu, MF_STRING | (g_awake ? 0 : MF_GRAYED) | (g_keepDisplay ? MF_CHECKED : 0),
+                ID_KEEP_DISPLAY,
                 Str(S_KEEP_DISPLAY));
 
     HMENU timerMenu = CreatePopupMenu();
