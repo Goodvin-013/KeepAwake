@@ -1,6 +1,6 @@
 ; Установщик KeepAwake (Inno Setup 6).
 ; Ставит программу в профиль текущего пользователя, права администратора не нужны.
-; Сборка: iscc /DAppVersion=2.1.0 installer\KeepAwake.iss
+; Сборка: iscc /DAppVersion=2.2.0 installer\KeepAwake.iss
 ; KeepAwake.exe берётся из build\Release (сборка CMake + MSVC).
 
 #ifndef AppVersion
