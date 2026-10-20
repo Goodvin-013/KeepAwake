@@ -162,6 +162,7 @@ UINT g_taskbarCreatedMsg = 0;
 
 HICON g_iconOn = nullptr;
 HICON g_iconOff = nullptr;
+HICON g_iconOnDisplay = nullptr;  // запрет сна + «Не выключать экран»
 
 Lang g_lang = LANG_EN_UI;
 
@@ -296,8 +297,10 @@ void TimerStatusText(wchar_t* out, size_t outCount) {
 void FreeIcons() {
     if (g_iconOn) DestroyIcon(g_iconOn);
     if (g_iconOff) DestroyIcon(g_iconOff);
+    if (g_iconOnDisplay) DestroyIcon(g_iconOnDisplay);
     g_iconOn = nullptr;
     g_iconOff = nullptr;
+    g_iconOnDisplay = nullptr;
 }
 
 // LoadIconMetric берёт из .ico кадр нужного размера под текущий масштаб
@@ -306,6 +309,15 @@ void LoadIcons() {
     FreeIcons();
     LoadIconMetric(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_ON), LIM_SMALL, &g_iconOn);
     LoadIconMetric(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_OFF), LIM_SMALL, &g_iconOff);
+    LoadIconMetric(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_ON_DISPLAY), LIM_SMALL,
+                   &g_iconOnDisplay);
+}
+
+// Серый глаз — сон разрешён, зелёный — запрещён,
+// зелёный в синей кайме — запрещены и сон, и выключение экрана.
+HICON CurrentIcon() {
+    if (!g_awake) return g_iconOff;
+    return g_keepDisplay ? g_iconOnDisplay : g_iconOn;
 }
 
 NOTIFYICONDATAW MakeNotifyData(UINT flags) {
@@ -330,7 +342,7 @@ void FillTip(wchar_t* out, size_t outCount) {
 void AddTrayIcon() {
     NOTIFYICONDATAW nid = MakeNotifyData(NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP);
     nid.uCallbackMessage = WM_APP_TRAY;
-    nid.hIcon = g_awake ? g_iconOn : g_iconOff;
+    nid.hIcon = CurrentIcon();
     FillTip(nid.szTip, ARRAYSIZE(nid.szTip));
     Shell_NotifyIconW(NIM_ADD, &nid);
 
@@ -345,7 +357,7 @@ void RemoveTrayIcon() {
 
 void UpdateTrayIcon() {
     NOTIFYICONDATAW nid = MakeNotifyData(NIF_ICON | NIF_TIP | NIF_SHOWTIP);
-    nid.hIcon = g_awake ? g_iconOn : g_iconOff;
+    nid.hIcon = CurrentIcon();
     FillTip(nid.szTip, ARRAYSIZE(nid.szTip));
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
