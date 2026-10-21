@@ -46,10 +46,10 @@ jobs:
           name: KeepAwake
           path: |
             build/Release/KeepAwake.exe
-            build/installer/KeepAwake-Setup.exe
+            build/installer/KeepAwake-Setup-${{ steps.version.outputs.value }}.exe
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" build/installer/KeepAwake-Setup.exe build/Release/KeepAwake.exe --title "KeepAwake ${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" "build/installer/KeepAwake-Setup-${{ steps.version.outputs.value }}.exe" build/Release/KeepAwake.exe --title "KeepAwake ${{ github.ref_name }}" --generate-notes

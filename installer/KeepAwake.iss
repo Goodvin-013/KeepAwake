@@ -25,7 +25,7 @@ DisableProgramGroupPage=yes
 ArchitecturesAllowed=x64compatible
 MinVersion=10.0
 OutputDir=..\build\installer
-OutputBaseFilename=KeepAwake-Setup
+OutputBaseFilename=KeepAwake-Setup-{#AppVersion}
 SetupIconFile=..\src\icons\KeepAwake-On.ico
 UninstallDisplayIcon={app}\KeepAwake.exe
 UninstallDisplayName=KeepAwake
@@ -51,6 +51,12 @@ Source: "{#ExeSource}"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{autodesktop}\KeepAwake"; Filename: "{app}\KeepAwake.exe"; Tasks: desktopicon
 
 [Code]
+// Номер версии в заголовке окна установки: «Установка — KeepAwake 2.3.0».
+procedure InitializeWizard;
+begin
+  WizardForm.Caption := WizardForm.Caption + ' {#AppVersion}';
+end;
+
 // При удалении убираем и сохранённый выбор языка.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin

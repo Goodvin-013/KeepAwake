@@ -40,9 +40,10 @@ KeepAwake не добавляется в автозагрузку.
 На странице [Releases](https://github.com/Goodvin-013/KeepAwake/releases)
 есть два файла:
 
-- **`KeepAwake-Setup.exe`** — установщик. Ставит программу в
-  `%LOCALAPPDATA%\Programs\KeepAwake`, создаёт ярлык на рабочем столе и
-  добавляет удаление в «Параметры → Приложения». Права администратора не нужны.
+- **`KeepAwake-Setup-X.Y.Z.exe`** — установщик, X.Y.Z — номер версии. Ставит
+  программу в `%LOCALAPPDATA%\Programs\KeepAwake`, создаёт ярлык на рабочем
+  столе и добавляет удаление в «Параметры → Приложения». Права администратора
+  не нужны.
 - **`KeepAwake.exe`** — сама программа без установки: положите в любую папку
   и запустите.
 
@@ -128,7 +129,7 @@ cmake --build build --config Release
 iscc /DAppVersion=2.3.0 installer\KeepAwake.iss
 ```
 
-Готовый файл: `build\installer\KeepAwake-Setup.exe`.
+Готовый файл: `build\installer\KeepAwake-Setup-2.3.0.exe`.
 
 Сборка через MinGW-w64 тоже поддерживается.
 
@@ -145,7 +146,7 @@ iscc /DAppVersion=2.3.0 installer\KeepAwake.iss
    git push origin v2.3.0
    ```
 
-GitHub соберёт `KeepAwake.exe` и `KeepAwake-Setup.exe` и опубликует их
+GitHub соберёт `KeepAwake.exe` и `KeepAwake-Setup-X.Y.Z.exe` и опубликует их
 на странице Releases.
 Если тег не совпадает с версией в `src/resource.h`, сборка остановится
 с ошибкой.
