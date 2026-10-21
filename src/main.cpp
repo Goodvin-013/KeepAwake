@@ -78,6 +78,7 @@ enum CommandId : UINT {
     ID_LANG_RU,
     ID_LANG_EN,
     ID_EXIT,
+    ID_TIMER_UNTIL,
     ID_TIMER_FIRST = 2000, // ID_TIMER_FIRST + индекс в kTimerMinutes
 };
 
@@ -100,6 +101,10 @@ enum StringId {
     S_AUTO_OFF,
     S_AFTER_FMT,
     S_TIMER_CANCEL,
+    S_TIMER_UNTIL,
+    S_PICKER_UNTIL_LABEL,
+    S_PICKER_OK,
+    S_PICKER_CANCEL,
     S_LANGUAGE,
     S_EXIT,
     S_TIP_ON,
@@ -131,6 +136,10 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Автоотключение",
         L"Через %ls",
         L"Отменить таймер",
+        L"До времени…",
+        L"Выключить запрет сна в:",
+        L"ОК",
+        L"Отмена",
         L"Язык / Language",
         L"Выход",
         L"KeepAwake — сон запрещён",
@@ -159,6 +168,10 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Turn off automatically",
         L"After %ls",
         L"Cancel timer",
+        L"Until a time…",
+        L"Allow sleep at:",
+        L"OK",
+        L"Cancel",
         L"Язык / Language",
         L"Exit",
         L"KeepAwake — sleep blocked",
@@ -244,25 +257,41 @@ void SaveLanguage(Lang lang) {
 // Форматирование
 // ---------------------------------------------------------------------------
 
-void FormatDuration(int minutes, wchar_t* out, size_t outCount) {
-    if (minutes < 60) {
-        StringCchPrintfW(out, outCount,
-                 g_lang == LANG_RU_UI ? L"%d минут" : L"%d minutes", minutes);
-        return;
-    }
+// Русское слово для числа: 1 минута, 2 минуты, 5 минут, 21 минута.
+const wchar_t* RuPlural(int n, const wchar_t* one, const wchar_t* few, const wchar_t* many) {
+    const int mod100 = n % 100;
+    const int mod10 = n % 10;
+    if (mod100 >= 11 && mod100 <= 14) return many;
+    if (mod10 == 1) return one;
+    if (mod10 >= 2 && mod10 <= 4) return few;
+    return many;
+}
 
+// Длительность словами: «30 минут», «2 часа», «2 ч 15 мин».
+void FormatDuration(int minutes, wchar_t* out, size_t outCount) {
     const int hours = minutes / 60;
+    const int rest = minutes % 60;
 
     if (g_lang == LANG_EN_UI) {
-        StringCchPrintfW(out, outCount, hours == 1 ? L"%d hour" : L"%d hours", hours);
+        if (hours == 0) {
+            StringCchPrintfW(out, outCount, minutes == 1 ? L"%d minute" : L"%d minutes", minutes);
+        } else if (rest == 0) {
+            StringCchPrintfW(out, outCount, hours == 1 ? L"%d hour" : L"%d hours", hours);
+        } else {
+            StringCchPrintfW(out, outCount, L"%d h %d min", hours, rest);
+        }
         return;
     }
 
-    const wchar_t* word = L"часов";
-    if (hours == 1) word = L"час";
-    else if (hours >= 2 && hours <= 4) word = L"часа";
-
-    StringCchPrintfW(out, outCount, L"%d %ls", hours, word);
+    if (hours == 0) {
+        StringCchPrintfW(out, outCount, L"%d %ls", minutes,
+                         RuPlural(minutes, L"минуту", L"минуты", L"минут"));
+    } else if (rest == 0) {
+        StringCchPrintfW(out, outCount, L"%d %ls", hours,
+                         RuPlural(hours, L"час", L"часа", L"часов"));
+    } else {
+        StringCchPrintfW(out, outCount, L"%d ч %d мин", hours, rest);
+    }
 }
 
 // Оставшееся время в формате часы:минуты:секунды.
@@ -276,7 +305,7 @@ void FormatRemaining(ULONGLONG remainingMs, wchar_t* out, size_t outCount) {
 }
 
 // Время окончания таймера по часам Windows, например 23:15:00.
-void FormatEndTime(int minutes, wchar_t* out, int outCount) {
+void FormatEndTime(ULONGLONG durationMs, wchar_t* out, int outCount) {
     SYSTEMTIME now = {};
     GetLocalTime(&now);
 
@@ -286,7 +315,7 @@ void FormatEndTime(int minutes, wchar_t* out, int outCount) {
     ULARGE_INTEGER t;
     t.LowPart = ft.dwLowDateTime;
     t.HighPart = ft.dwHighDateTime;
-    t.QuadPart += static_cast<ULONGLONG>(minutes) * 60ULL * 10000000ULL;
+    t.QuadPart += durationMs * 10000ULL;  // FILETIME считает в единицах по 100 нс
     ft.dwLowDateTime = t.LowPart;
     ft.dwHighDateTime = t.HighPart;
 
@@ -536,10 +565,10 @@ void CheckBattery() {
     }
 }
 
-void StartTimer(int minutes, bool notify) {
+void StartTimerMs(ULONGLONG durationMs, bool notify) {
     if (!SetAwake(true, false)) return;
 
-    g_deadlineMs = GetTickCount64() + static_cast<ULONGLONG>(minutes) * 60000ULL;
+    g_deadlineMs = GetTickCount64() + durationMs;
     g_timerRunning = true;
     SetTimer(g_window, kCountdownTimerId, kCountdownIntervalMs, nullptr);
     UpdateTrayIcon();
@@ -549,11 +578,17 @@ void StartTimer(int minutes, bool notify) {
         wchar_t endTime[32];
         wchar_t text[256];
 
-        FormatDuration(minutes, duration, ARRAYSIZE(duration));
-        FormatEndTime(minutes, endTime, ARRAYSIZE(endTime));
+        // Длительность округляем до минуты вверх: 2 ч 14 мин 30 с → 2 ч 15 мин.
+        FormatDuration(static_cast<int>((durationMs + 59999ULL) / 60000ULL),
+                       duration, ARRAYSIZE(duration));
+        FormatEndTime(durationMs, endTime, ARRAYSIZE(endTime));
         StringCchPrintfW(text, ARRAYSIZE(text), Str(S_NOTIFY_TIMER_START_FMT), duration, endTime);
         ShowNotification(text);
     }
+}
+
+void StartTimer(int minutes, bool notify) {
+    StartTimerMs(static_cast<ULONGLONG>(minutes) * 60000ULL, notify);
 }
 
 void OnCountdownTick() {
@@ -633,6 +668,8 @@ HMENU BuildMenu() {
         AppendMenuW(timerMenu, MF_STRING, ID_TIMER_FIRST + i, text);
     }
     AppendMenuW(timerMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(timerMenu, MF_STRING, ID_TIMER_UNTIL, Str(S_TIMER_UNTIL));
+    AppendMenuW(timerMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(timerMenu, MF_STRING | (g_timerRunning ? 0 : MF_GRAYED), ID_TIMER_CANCEL,
                 Str(S_TIMER_CANCEL));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), Str(S_AUTO_OFF));
@@ -650,6 +687,120 @@ HMENU BuildMenu() {
     AppendMenuW(menu, MF_STRING, ID_EXIT, Str(S_EXIT));
 
     return menu;
+}
+
+// ---------------------------------------------------------------------------
+// Окно «До времени…»: время меняется шагом 15 минут колёсиком мыши,
+// стрелками ↑↓ на клавиатуре или кнопками справа от поля.
+// ---------------------------------------------------------------------------
+
+constexpr int kPickerStepMinutes = 15;
+constexpr int kMinutesPerDay = 24 * 60;
+
+struct TimePicker {
+    int value = 0;       // минуты от начала суток, кратно 15
+    int wheelDelta = 0;  // накопленный поворот колёсика (для тачпадов)
+};
+
+HWND g_pickerWindow = nullptr;  // открытое окно выбора времени
+
+void PickerShowValue(HWND dlg, const TimePicker* picker) {
+    wchar_t text[16];
+    StringCchPrintfW(text, ARRAYSIZE(text), L"%02d:%02d", picker->value / 60, picker->value % 60);
+    SetDlgItemTextW(dlg, IDC_TIME_VALUE, text);
+}
+
+void PickerStep(HWND dlg, TimePicker* picker, int steps) {
+    const int value = picker->value + steps * kPickerStepMinutes;
+    picker->value = ((value % kMinutesPerDay) + kMinutesPerDay) % kMinutesPerDay;
+    PickerShowValue(dlg, picker);
+}
+
+INT_PTR CALLBACK TimePickerProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* picker = reinterpret_cast<TimePicker*>(GetWindowLongPtrW(dlg, DWLP_USER));
+
+    switch (msg) {
+    case WM_INITDIALOG:
+        picker = reinterpret_cast<TimePicker*>(lParam);
+        SetWindowLongPtrW(dlg, DWLP_USER, lParam);
+        g_pickerWindow = dlg;
+
+        SetDlgItemTextW(dlg, IDC_TIME_LABEL, Str(S_PICKER_UNTIL_LABEL));
+        SetDlgItemTextW(dlg, IDOK, Str(S_PICKER_OK));
+        SetDlgItemTextW(dlg, IDCANCEL, Str(S_PICKER_CANCEL));
+
+        // Позиция счётчика не используется: шаг считаем сами.
+        SendDlgItemMessageW(dlg, IDC_TIME_SPIN, UDM_SETRANGE32, 0, 1000);
+        SendDlgItemMessageW(dlg, IDC_TIME_SPIN, UDM_SETPOS32, 0, 500);
+        PickerShowValue(dlg, picker);
+
+        SetForegroundWindow(dlg);
+        SetFocus(GetDlgItem(dlg, IDC_TIME_VALUE));
+        SendDlgItemMessageW(dlg, IDC_TIME_VALUE, EM_SETSEL, static_cast<WPARAM>(-1), 0);
+        return FALSE;  // фокус уже установлен
+
+    case WM_MOUSEWHEEL:
+        picker->wheelDelta += GET_WHEEL_DELTA_WPARAM(wParam);
+        while (picker->wheelDelta >= WHEEL_DELTA) {
+            PickerStep(dlg, picker, 1);
+            picker->wheelDelta -= WHEEL_DELTA;
+        }
+        while (picker->wheelDelta <= -WHEEL_DELTA) {
+            PickerStep(dlg, picker, -1);
+            picker->wheelDelta += WHEEL_DELTA;
+        }
+        return TRUE;
+
+    case WM_NOTIFY: {
+        const auto* hdr = reinterpret_cast<const NMHDR*>(lParam);
+        if (hdr->idFrom == IDC_TIME_SPIN && hdr->code == UDN_DELTAPOS) {
+            const auto* ud = reinterpret_cast<const NMUPDOWN*>(lParam);
+            PickerStep(dlg, picker, ud->iDelta > 0 ? 1 : -1);
+            SetWindowLongPtrW(dlg, DWLP_MSGRESULT, TRUE);
+            return TRUE;
+        }
+        break;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
+            EndDialog(dlg, LOWORD(wParam));
+            return TRUE;
+        }
+        break;
+
+    case WM_DESTROY:
+        g_pickerWindow = nullptr;
+        break;
+
+    default:
+        break;
+    }
+    return FALSE;
+}
+
+// Запрет сна до выбранного времени. Если это время сегодня уже прошло,
+// запрет действует до этого времени завтра.
+void ShowUntilPicker() {
+    SYSTEMTIME now = {};
+    GetLocalTime(&now);
+
+    // По умолчанию: ближайшая четверть часа плюс один час.
+    const int nowMinutes = now.wHour * 60 + now.wMinute;
+    TimePicker picker;
+    picker.value = ((nowMinutes / kPickerStepMinutes + 1) * kPickerStepMinutes + 60) % kMinutesPerDay;
+
+    const INT_PTR result = DialogBoxParamW(g_instance, MAKEINTRESOURCEW(IDD_TIME_PICKER), g_window,
+                                           TimePickerProc, reinterpret_cast<LPARAM>(&picker));
+    if (result != IDOK) return;
+
+    GetLocalTime(&now);
+    const LONGLONG nowMs =
+        ((now.wHour * 60LL + now.wMinute) * 60LL + now.wSecond) * 1000LL + now.wMilliseconds;
+    LONGLONG durationMs = picker.value * 60000LL - nowMs;
+    if (durationMs <= 0) durationMs += kMinutesPerDay * 60000LL;
+
+    StartTimerMs(static_cast<ULONGLONG>(durationMs), true);
 }
 
 void SetLanguage(Lang lang) {
@@ -677,6 +828,9 @@ void HandleCommand(UINT id) {
         break;
     case ID_TIMER_CANCEL:
         StopTimer(TimerStop::Cancelled);
+        break;
+    case ID_TIMER_UNTIL:
+        ShowUntilPicker();
         break;
     case ID_LANG_RU:
         SetLanguage(LANG_RU_UI);
@@ -732,6 +886,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     switch (msg) {
     case WM_APP_TRAY:
+        // Пока открыто окно выбора времени, щелчок по значку показывает его.
+        if (g_pickerWindow) {
+            if (LOWORD(lParam) == WM_CONTEXTMENU || LOWORD(lParam) == WM_LBUTTONDBLCLK) {
+                SetForegroundWindow(g_pickerWindow);
+            }
+            return 0;
+        }
         switch (LOWORD(lParam)) {
         case WM_CONTEXTMENU:
             ShowTrayMenu(static_cast<short>(LOWORD(wParam)),
