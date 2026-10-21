@@ -339,7 +339,7 @@ void LoadIcons() {
 }
 
 // Серый глаз — сон разрешён, зелёный — запрещён,
-// зелёный в синей кайме — запрещены и сон, и выключение экрана.
+// синий — запрещены и сон, и выключение экрана.
 HICON CurrentIcon() {
     if (!g_awake) return g_iconOff;
     return g_keepDisplay ? g_iconOnDisplay : g_iconOn;
