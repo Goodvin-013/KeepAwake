@@ -43,6 +43,13 @@ constexpr UINT kTrayIconId = 1;
 constexpr UINT_PTR kCountdownTimerId = 1;
 constexpr UINT kCountdownIntervalMs = 500;
 
+// Горячая клавиша Ctrl+Alt+K включает и выключает запрет сна,
+// как двойной щелчок по значку.
+constexpr int kHotkeyId = 1;
+constexpr UINT kHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
+constexpr UINT kHotkeyKey = 'K';
+constexpr wchar_t kHotkeyText[] = L"Ctrl+Alt+K";
+
 // При ручном запуске запрет сна включается на 10 часов.
 constexpr int kStartupMinutes = 600;
 
@@ -184,6 +191,7 @@ HICON g_iconOnDisplay = nullptr;  // запрет сна + «Не выключа
 Lang g_lang = LANG_EN_UI;
 
 bool g_awake = false;        // запрет сна включён
+bool g_hotkey = false;       // Ctrl+Alt+K зарегистрирована (не занята другой программой)
 bool g_keepDisplay = false;  // галочка «Не выключать экран» (не сохраняется)
 bool g_timerRunning = false;
 ULONGLONG g_deadlineMs = 0;  // по GetTickCount64
@@ -601,8 +609,18 @@ HMENU BuildMenu() {
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(menu, MF_STRING | (g_awake ? MF_GRAYED : 0), ID_ENABLE, Str(S_ENABLE));
-    AppendMenuW(menu, MF_STRING | (g_awake ? 0 : MF_GRAYED), ID_DISABLE, Str(S_DISABLE));
+    // Справа от пунктов показываем горячую клавишу, если она работает.
+    wchar_t enableText[96];
+    wchar_t disableText[96];
+    if (g_hotkey) {
+        StringCchPrintfW(enableText, ARRAYSIZE(enableText), L"%ls\t%ls", Str(S_ENABLE), kHotkeyText);
+        StringCchPrintfW(disableText, ARRAYSIZE(disableText), L"%ls\t%ls", Str(S_DISABLE), kHotkeyText);
+    } else {
+        StringCchCopyW(enableText, ARRAYSIZE(enableText), Str(S_ENABLE));
+        StringCchCopyW(disableText, ARRAYSIZE(disableText), Str(S_DISABLE));
+    }
+    AppendMenuW(menu, MF_STRING | (g_awake ? MF_GRAYED : 0), ID_ENABLE, enableText);
+    AppendMenuW(menu, MF_STRING | (g_awake ? 0 : MF_GRAYED), ID_DISABLE, disableText);
     AppendMenuW(menu, MF_STRING | (g_awake ? 0 : MF_GRAYED) | (g_keepDisplay ? MF_CHECKED : 0),
                 ID_KEEP_DISPLAY,
                 Str(S_KEEP_DISPLAY));
@@ -727,6 +745,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
 
+    case WM_HOTKEY:
+        if (wParam == kHotkeyId) {
+            // Открытое меню показывало бы устаревшее состояние.
+            if (g_openMenu) EndMenu();
+            ToggleAwake();
+        }
+        return 0;
+
     case WM_TIMER:
         if (wParam == kCountdownTimerId) OnCountdownTick();
         return 0;
@@ -743,6 +769,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_DESTROY:
         ReleaseAwake();
+        if (g_hotkey) UnregisterHotKey(hwnd, kHotkeyId);
         RemoveTrayIcon();
         PostQuitMessage(0);
         return 0;
@@ -787,6 +814,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     LoadIcons();
     AddTrayIcon();
+
+    // Если сочетание уже занято другой программой, работаем без него.
+    g_hotkey = RegisterHotKey(g_window, kHotkeyId, kHotkeyModifiers, kHotkeyKey) != FALSE;
 
     // Подписываемся на изменения заряда и источника питания для защиты батареи.
     HPOWERNOTIFY batteryNotify =
