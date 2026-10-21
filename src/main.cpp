@@ -79,6 +79,7 @@ enum CommandId : UINT {
     ID_LANG_EN,
     ID_EXIT,
     ID_TIMER_UNTIL,
+    ID_TIMER_CUSTOM,
     ID_TIMER_FIRST = 2000, // ID_TIMER_FIRST + индекс в kTimerMinutes
 };
 
@@ -102,7 +103,9 @@ enum StringId {
     S_AFTER_FMT,
     S_TIMER_CANCEL,
     S_TIMER_UNTIL,
+    S_TIMER_CUSTOM,
     S_PICKER_UNTIL_LABEL,
+    S_PICKER_CUSTOM_LABEL,
     S_PICKER_OK,
     S_PICKER_CANCEL,
     S_LANGUAGE,
@@ -137,7 +140,9 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Через %ls",
         L"Отменить таймер",
         L"До времени…",
+        L"Свой интервал…",
         L"Выключить запрет сна в:",
+        L"Запрет сна на:",
         L"ОК",
         L"Отмена",
         L"Язык / Language",
@@ -169,7 +174,9 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"After %ls",
         L"Cancel timer",
         L"Until a time…",
+        L"Custom interval…",
         L"Allow sleep at:",
+        L"Block sleep for:",
         L"OK",
         L"Cancel",
         L"Язык / Language",
@@ -668,6 +675,7 @@ HMENU BuildMenu() {
         AppendMenuW(timerMenu, MF_STRING, ID_TIMER_FIRST + i, text);
     }
     AppendMenuW(timerMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(timerMenu, MF_STRING, ID_TIMER_CUSTOM, Str(S_TIMER_CUSTOM));
     AppendMenuW(timerMenu, MF_STRING, ID_TIMER_UNTIL, Str(S_TIMER_UNTIL));
     AppendMenuW(timerMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(timerMenu, MF_STRING | (g_timerRunning ? 0 : MF_GRAYED), ID_TIMER_CANCEL,
@@ -690,15 +698,21 @@ HMENU BuildMenu() {
 }
 
 // ---------------------------------------------------------------------------
-// Окно «До времени…»: время меняется шагом 15 минут колёсиком мыши,
-// стрелками ↑↓ на клавиатуре или кнопками справа от поля.
+// Окна «До времени…» и «Свой интервал…»: значение меняется шагом 15 минут
+// колёсиком мыши, стрелками ↑↓ на клавиатуре или кнопками справа от поля.
 // ---------------------------------------------------------------------------
 
 constexpr int kPickerStepMinutes = 15;
 constexpr int kMinutesPerDay = 24 * 60;
 
+enum class PickerMode {
+    Until,     // время суток 00:00–23:45, по кругу
+    Interval,  // длительность 0:15–24:00, без перехода по кругу
+};
+
 struct TimePicker {
-    int value = 0;       // минуты от начала суток, кратно 15
+    PickerMode mode = PickerMode::Until;
+    int value = 0;       // минуты, кратно 15
     int wheelDelta = 0;  // накопленный поворот колёсика (для тачпадов)
 };
 
@@ -706,13 +720,21 @@ HWND g_pickerWindow = nullptr;  // открытое окно выбора вре
 
 void PickerShowValue(HWND dlg, const TimePicker* picker) {
     wchar_t text[16];
-    StringCchPrintfW(text, ARRAYSIZE(text), L"%02d:%02d", picker->value / 60, picker->value % 60);
+    StringCchPrintfW(text, ARRAYSIZE(text),
+                     picker->mode == PickerMode::Until ? L"%02d:%02d" : L"%d:%02d",
+                     picker->value / 60, picker->value % 60);
     SetDlgItemTextW(dlg, IDC_TIME_VALUE, text);
 }
 
 void PickerStep(HWND dlg, TimePicker* picker, int steps) {
     const int value = picker->value + steps * kPickerStepMinutes;
-    picker->value = ((value % kMinutesPerDay) + kMinutesPerDay) % kMinutesPerDay;
+    if (picker->mode == PickerMode::Until) {
+        picker->value = ((value % kMinutesPerDay) + kMinutesPerDay) % kMinutesPerDay;
+    } else {
+        if (value < kPickerStepMinutes) picker->value = kPickerStepMinutes;
+        else if (value > kMinutesPerDay) picker->value = kMinutesPerDay;
+        else picker->value = value;
+    }
     PickerShowValue(dlg, picker);
 }
 
@@ -725,7 +747,9 @@ INT_PTR CALLBACK TimePickerProc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lParam
         SetWindowLongPtrW(dlg, DWLP_USER, lParam);
         g_pickerWindow = dlg;
 
-        SetDlgItemTextW(dlg, IDC_TIME_LABEL, Str(S_PICKER_UNTIL_LABEL));
+        SetDlgItemTextW(dlg, IDC_TIME_LABEL,
+                        Str(picker->mode == PickerMode::Until ? S_PICKER_UNTIL_LABEL
+                                                              : S_PICKER_CUSTOM_LABEL));
         SetDlgItemTextW(dlg, IDOK, Str(S_PICKER_OK));
         SetDlgItemTextW(dlg, IDCANCEL, Str(S_PICKER_CANCEL));
 
@@ -803,6 +827,19 @@ void ShowUntilPicker() {
     StartTimerMs(static_cast<ULONGLONG>(durationMs), true);
 }
 
+// Запрет сна на выбранный интервал: от 15 минут до 24 часов.
+void ShowCustomPicker() {
+    TimePicker picker;
+    picker.mode = PickerMode::Interval;
+    picker.value = 60;  // по умолчанию 1 час
+
+    const INT_PTR result = DialogBoxParamW(g_instance, MAKEINTRESOURCEW(IDD_TIME_PICKER), g_window,
+                                           TimePickerProc, reinterpret_cast<LPARAM>(&picker));
+    if (result != IDOK) return;
+
+    StartTimer(picker.value, true);
+}
+
 void SetLanguage(Lang lang) {
     g_lang = lang;
     SaveLanguage(lang);
@@ -831,6 +868,9 @@ void HandleCommand(UINT id) {
         break;
     case ID_TIMER_UNTIL:
         ShowUntilPicker();
+        break;
+    case ID_TIMER_CUSTOM:
+        ShowCustomPicker();
         break;
     case ID_LANG_RU:
         SetLanguage(LANG_RU_UI);
