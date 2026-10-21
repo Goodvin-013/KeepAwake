@@ -24,9 +24,6 @@
 #include <commctrl.h>
 #include <wchar.h>
 #include <strsafe.h>
-#include <shellscalingapi.h>
-#include <uxtheme.h>
-#include <vssym32.h>
 
 #include "resource.h"
 
@@ -453,7 +450,15 @@ BOOL CALLBACK FindMenuWindowProc(HWND hwnd, LPARAM lParam) {
 void RefreshOpenMenu() {
     if (!g_openMenu) return;
 
-    // Строку таймера рисуем сами: достаточно перерисовать окно меню.
+    wchar_t text[64];
+    TimerStatusText(text, ARRAYSIZE(text));
+
+    MENUITEMINFOW mii = {};
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_STRING;
+    mii.dwTypeData = text;
+    SetMenuItemInfoW(g_openMenu, ID_TIMER_STATUS, FALSE, &mii);
+
     bool found = false;
     EnumThreadWindows(GetCurrentThreadId(), FindMenuWindowProc,
                       reinterpret_cast<LPARAM>(&found));
@@ -645,265 +650,19 @@ void ToggleAwake() {
 // Контекстное меню
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Верх меню, который рисуем сами, чтобы он не выглядел недоступным:
-// шапка (зелёный глаз, «KeepAwake» жирным, версия), строка статуса
-// с цветной точкой и строка таймера. Пункты не нажимаются.
-// ---------------------------------------------------------------------------
-
-constexpr wchar_t kHeaderName[] = L"KeepAwake";
-constexpr wchar_t kHeaderVersion[] = L"" KA_VERSION_STRING;
-
-constexpr COLORREF kDotOnColor = RGB(0x0E, 0x96, 0x68);   // зелёный, как значок
-constexpr COLORREF kDotOffColor = RGB(0x9A, 0x9A, 0x9A);  // серый, как значок
-constexpr int kDotSize = 8;                               // диаметр точки при 100 %
-
-UINT g_menuDpi = USER_DEFAULT_SCREEN_DPI;  // масштаб монитора, где открыто меню
-HICON g_menuIcon = nullptr;                // значок для шапки под этот масштаб
-
-// Размеры обычных пунктов меню, чтобы наши строки стояли с ними ровно.
-struct MenuMetrics {
-    int checkWidth = 0;  // колонка слева, где у пунктов галочка
-    int textX = 0;       // начало текста от левого края пункта
-    int checkHeight = 0;
-    int padY = 0;        // отступы сверху и снизу у текста пункта
-};
-MenuMetrics g_menuMetrics;
-
-int MenuScale(int px) {
-    return MulDiv(px, static_cast<int>(g_menuDpi), USER_DEFAULT_SCREEN_DPI);
-}
-
-// Тема меню под масштаб монитора. OpenThemeDataForDpi берём из uxtheme.dll
-// во время работы: её нет в библиотеках MinGW.
-HTHEME OpenMenuTheme(HWND hwnd) {
-    using OpenForDpi = HTHEME(WINAPI*)(HWND, LPCWSTR, UINT);
-    static const auto openForDpi = reinterpret_cast<OpenForDpi>(reinterpret_cast<void*>(
-        GetProcAddress(GetModuleHandleW(L"uxtheme.dll"), "OpenThemeDataForDpi")));
-    if (openForDpi) return openForDpi(hwnd, L"MENU", g_menuDpi);
-    return OpenThemeData(hwnd, L"MENU");
-}
-
-// Берём размеры из темы меню Windows; без темы — из системных метрик.
-void ComputeMenuMetrics() {
-    MenuMetrics m;
-    HTHEME theme = OpenMenuTheme(g_window);
-    if (theme) {
-        SIZE check = {};
-        MARGINS checkMargins = {};
-        MARGINS checkBgMargins = {};
-        MARGINS itemMargins = {};
-        int gutter = 0;
-        GetThemePartSize(theme, nullptr, MENU_POPUPCHECK, 0, nullptr, TS_TRUE, &check);
-        GetThemeMargins(theme, nullptr, MENU_POPUPCHECK, 0, TMT_CONTENTMARGINS, nullptr,
-                        &checkMargins);
-        GetThemeMargins(theme, nullptr, MENU_POPUPCHECKBACKGROUND, 0, TMT_CONTENTMARGINS,
-                        nullptr, &checkBgMargins);
-        GetThemeMargins(theme, nullptr, MENU_POPUPITEM, 0, TMT_CONTENTMARGINS, nullptr,
-                        &itemMargins);
-        GetThemeInt(theme, MENU_POPUPBACKGROUND, 0, TMT_BORDERSIZE, &gutter);
-        CloseThemeData(theme);
-
-        m.checkWidth = check.cx + checkMargins.cxLeftWidth + checkMargins.cxRightWidth +
-                       checkBgMargins.cxLeftWidth + checkBgMargins.cxRightWidth;
-        m.checkHeight = check.cy + checkMargins.cyTopHeight + checkMargins.cyBottomHeight +
-                        checkBgMargins.cyTopHeight + checkBgMargins.cyBottomHeight;
-        m.textX = m.checkWidth + gutter + itemMargins.cxLeftWidth;
-        m.padY = itemMargins.cyTopHeight + itemMargins.cyBottomHeight;
-    }
-    if (m.checkWidth <= 0) {
-        m.checkWidth = GetSystemMetricsForDpi(SM_CXMENUCHECK, g_menuDpi) + MenuScale(4);
-        m.checkHeight = GetSystemMetricsForDpi(SM_CYMENUCHECK, g_menuDpi);
-        m.textX = m.checkWidth + MenuScale(4);
-        m.padY = MenuScale(6);
-    }
-    g_menuMetrics = m;
-}
-
-// Шрифт меню Windows под масштаб монитора; bold — жирный вариант.
-HFONT CreateMenuFont(bool bold) {
-    NONCLIENTMETRICSW ncm = {};
-    ncm.cbSize = sizeof(ncm);
-    if (!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, g_menuDpi)) {
-        return nullptr;
-    }
-    if (bold) ncm.lfMenuFont.lfWeight = FW_BOLD;
-    return CreateFontIndirectW(&ncm.lfMenuFont);
-}
-
-SIZE TextSize(HDC dc, HFONT font, const wchar_t* text) {
-    SIZE size = {};
-    HGDIOBJ old = SelectObject(dc, font);
-    GetTextExtentPoint32W(dc, text, static_cast<int>(wcslen(text)), &size);
-    SelectObject(dc, old);
-    return size;
-}
-
-// Текст строки статуса или таймера.
-void InfoLineText(UINT id, wchar_t* out, size_t outCount) {
-    if (id == ID_STATUS) {
-        StringCchCopyW(out, outCount, Str(g_awake ? S_STATUS_ON : S_STATUS_OFF));
-    } else {
-        TimerStatusText(out, outCount);
-    }
-}
-
-void MeasureMenuLine(MEASUREITEMSTRUCT* mis) {
-    HFONT bold = CreateMenuFont(true);
-    HFONT regular = CreateMenuFont(false);
-    HDC dc = GetDC(nullptr);
-
-    int width = 0;
-    int textHeight = 0;
-    if (mis->itemID == ID_VERSION) {
-        const SIZE name = TextSize(dc, bold, kHeaderName);
-        const SIZE version = TextSize(dc, regular, kHeaderVersion);
-        width = g_menuMetrics.textX + name.cx + MenuScale(6) + version.cx;
-        textHeight = name.cy > version.cy ? name.cy : version.cy;
-    } else {
-        wchar_t text[64];
-        InfoLineText(mis->itemID, text, ARRAYSIZE(text));
-        const SIZE size = TextSize(dc, regular, text);
-        width = g_menuMetrics.textX + size.cx;
-        textHeight = size.cy;
-    }
-
-    ReleaseDC(nullptr, dc);
-    if (bold) DeleteObject(bold);
-    if (regular) DeleteObject(regular);
-
-    int height = textHeight + g_menuMetrics.padY;
-    if (height < g_menuMetrics.checkHeight) height = g_menuMetrics.checkHeight;
-    if (mis->itemID == ID_VERSION) {
-        const int iconHeight = GetSystemMetricsForDpi(SM_CYSMICON, g_menuDpi) + MenuScale(8);
-        if (height < iconHeight) height = iconHeight;
-    }
-
-    // Windows сама добавляет к ширине колонку галочки, вычитаем её.
-    width += MenuScale(16) - GetSystemMetricsForDpi(SM_CXMENUCHECK, g_menuDpi);
-    mis->itemWidth = static_cast<UINT>(width > 0 ? width : 0);
-    mis->itemHeight = static_cast<UINT>(height);
-}
-
-// Круглая точка со сглаженным краем.
-void DrawDot(HDC dc, int centerX, int centerY, int size, COLORREF color) {
-    BITMAPINFO bi = {};
-    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = size;
-    bi.bmiHeader.biHeight = -size;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!bitmap) return;
-
-    // Покрытие пикселя считаем по сетке 4×4 и записываем цвет с альфой.
-    auto* pixels = static_cast<DWORD*>(bits);
-    const double radius = size / 2.0;
-    for (int y = 0; y < size; ++y) {
-        for (int x = 0; x < size; ++x) {
-            int inside = 0;
-            for (int sy = 0; sy < 4; ++sy) {
-                for (int sx = 0; sx < 4; ++sx) {
-                    const double dx = x + (sx + 0.5) / 4.0 - radius;
-                    const double dy = y + (sy + 0.5) / 4.0 - radius;
-                    if (dx * dx + dy * dy <= radius * radius) ++inside;
-                }
-            }
-            const DWORD a = static_cast<DWORD>(inside * 255 / 16);
-            const DWORD r = GetRValue(color) * a / 255;
-            const DWORD g = GetGValue(color) * a / 255;
-            const DWORD b = GetBValue(color) * a / 255;
-            pixels[y * size + x] = (a << 24) | (r << 16) | (g << 8) | b;
-        }
-    }
-
-    HDC memDc = CreateCompatibleDC(dc);
-    HGDIOBJ old = SelectObject(memDc, bitmap);
-    BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    AlphaBlend(dc, centerX - size / 2, centerY - size / 2, size, size, memDc, 0, 0, size, size,
-               blend);
-    SelectObject(memDc, old);
-    DeleteDC(memDc);
-    DeleteObject(bitmap);
-}
-
-void DrawMenuLine(const DRAWITEMSTRUCT* dis) {
-    HDC dc = dis->hDC;
-    const RECT rc = dis->rcItem;
-
-    // Фон и цвет текста берём из темы меню, как у обычных пунктов.
-    // Фон рисуем сами, чтобы при перерисовке текст не накладывался.
-    // Без темы оставляем фон, который нарисовала Windows.
-    COLORREF textColor = GetSysColor(COLOR_MENUTEXT);
-    HWND menuWindow = WindowFromDC(dc);
-    HTHEME theme = menuWindow ? OpenMenuTheme(menuWindow) : nullptr;
-    if (theme) {
-        RECT menuRect = rc;
-        GetClientRect(menuWindow, &menuRect);
-        DrawThemeBackground(theme, dc, MENU_POPUPBACKGROUND, 0, &menuRect, &rc);
-        GetThemeColor(theme, MENU_POPUPITEM, MPI_NORMAL, TMT_TEXTCOLOR, &textColor);
-        CloseThemeData(theme);
-    }
-
-    HFONT bold = CreateMenuFont(true);
-    HFONT regular = CreateMenuFont(false);
-    const int middle = (rc.top + rc.bottom) / 2;
-    const int checkCenter = rc.left + g_menuMetrics.checkWidth / 2;
-    int x = rc.left + g_menuMetrics.textX;
-
-    const int oldMode = SetBkMode(dc, TRANSPARENT);
-    const COLORREF oldColor = SetTextColor(dc, textColor);
-    HGDIOBJ oldFont = SelectObject(dc, regular);
-
-    if (dis->itemID == ID_VERSION) {
-        // Значок в колонке галочки, название и версия — по линии текста пунктов.
-        const int iconSize = GetSystemMetricsForDpi(SM_CXSMICON, g_menuDpi);
-        if (g_menuIcon) {
-            DrawIconEx(dc, checkCenter - iconSize / 2, middle - iconSize / 2, g_menuIcon,
-                       iconSize, iconSize, 0, nullptr, DI_NORMAL);
-        }
-        const SIZE name = TextSize(dc, bold, kHeaderName);
-        SelectObject(dc, bold);
-        TextOutW(dc, x, middle - name.cy / 2, kHeaderName, ARRAYSIZE(kHeaderName) - 1);
-        x += name.cx + MenuScale(6);
-        const SIZE version = TextSize(dc, regular, kHeaderVersion);
-        SelectObject(dc, regular);
-        TextOutW(dc, x, middle - version.cy / 2, kHeaderVersion, ARRAYSIZE(kHeaderVersion) - 1);
-    } else {
-        if (dis->itemID == ID_STATUS) {
-            DrawDot(dc, checkCenter, middle, MenuScale(kDotSize),
-                    g_awake ? kDotOnColor : kDotOffColor);
-        }
-        wchar_t text[64];
-        InfoLineText(dis->itemID, text, ARRAYSIZE(text));
-        const SIZE size = TextSize(dc, regular, text);
-        TextOutW(dc, x, middle - size.cy / 2, text, static_cast<int>(wcslen(text)));
-    }
-
-    SelectObject(dc, oldFont);
-    SetTextColor(dc, oldColor);
-    SetBkMode(dc, oldMode);
-    if (bold) DeleteObject(bold);
-    if (regular) DeleteObject(regular);
-}
-
-bool IsCustomMenuLine(UINT id) {
-    return id == ID_VERSION || id == ID_STATUS || id == ID_TIMER_STATUS;
-}
-
 HMENU BuildMenu() {
     HMENU menu = CreatePopupMenu();
     wchar_t text[128];
 
-    // Шапка, статус и таймер рисуем сами (DrawMenuLine), чтобы они
-    // не выглядели как недоступные пункты.
-    AppendMenuW(menu, MF_OWNERDRAW | MF_DISABLED, ID_VERSION, nullptr);
+    // Название и версия программы, чтобы было видно, какая версия запущена.
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_OWNERDRAW | MF_DISABLED, ID_STATUS, nullptr);
-    AppendMenuW(menu, MF_OWNERDRAW | MF_DISABLED, ID_TIMER_STATUS, nullptr);
+
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_STATUS,
+                Str(g_awake ? S_STATUS_ON : S_STATUS_OFF));
+
+    TimerStatusText(text, ARRAYSIZE(text));
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_TIMER_STATUS, text);
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
@@ -1115,20 +874,6 @@ void HandleCommand(UINT id) {
 }
 
 void ShowTrayMenu(int x, int y) {
-    // Масштаб монитора, на котором откроется меню, — для шапки.
-    UINT dpiX = USER_DEFAULT_SCREEN_DPI;
-    UINT dpiY = USER_DEFAULT_SCREEN_DPI;
-    const POINT pt = { x, y };
-    if (FAILED(GetDpiForMonitor(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST),
-                                MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
-        dpiY = USER_DEFAULT_SCREEN_DPI;
-    }
-    g_menuDpi = dpiY;
-    ComputeMenuMetrics();
-    const int iconSize = GetSystemMetricsForDpi(SM_CXSMICON, g_menuDpi);
-    LoadIconWithScaleDown(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_ON), iconSize, iconSize,
-                          &g_menuIcon);
-
     HMENU menu = BuildMenu();
 
     // Без этого меню не закрывается при щелчке мимо него.
@@ -1143,10 +888,6 @@ void ShowTrayMenu(int x, int y) {
     g_openMenu = nullptr;
 
     DestroyMenu(menu);
-    if (g_menuIcon) {
-        DestroyIcon(g_menuIcon);
-        g_menuIcon = nullptr;
-    }
     PostMessageW(g_window, WM_NULL, 0, 0);
 
     if (cmd != 0) HandleCommand(cmd);
@@ -1191,24 +932,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         }
         return 0;
-
-    case WM_MEASUREITEM: {
-        auto* mis = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
-        if (mis->CtlType == ODT_MENU && IsCustomMenuLine(mis->itemID)) {
-            MeasureMenuLine(mis);
-            return TRUE;
-        }
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
-    }
-
-    case WM_DRAWITEM: {
-        const auto* dis = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
-        if (dis->CtlType == ODT_MENU && IsCustomMenuLine(dis->itemID)) {
-            DrawMenuLine(dis);
-            return TRUE;
-        }
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
-    }
 
     case WM_HOTKEY:
         if (wParam == kHotkeyId) {
