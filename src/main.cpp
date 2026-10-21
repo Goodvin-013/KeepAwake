@@ -22,6 +22,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <commctrl.h>
+#include <shellscalingapi.h>
 #include <wchar.h>
 #include <strsafe.h>
 
@@ -217,6 +218,8 @@ bool g_timerRunning = false;
 ULONGLONG g_deadlineMs = 0;  // по GetTickCount64
 
 HMENU g_openMenu = nullptr;  // меню, открытое в данный момент
+HBITMAP g_menuIconBitmap = nullptr;  // значок программы у строки с версией
+HBITMAP g_menuDotBitmap = nullptr;   // цветная точка у строки статуса
 
 const wchar_t* Str(StringId id) {
     return kStrings[g_lang][id];
@@ -647,6 +650,158 @@ void ToggleAwake() {
 }
 
 // ---------------------------------------------------------------------------
+// Картинки в меню: значок у версии и цветная точка у статуса.
+// Это обычные картинки пунктов (32 бита с прозрачностью), поэтому Windows
+// рисует меню в родном стиле. Рисование пунктов самой программой
+// переключило бы всё меню в классический стиль.
+// ---------------------------------------------------------------------------
+
+constexpr COLORREF kDotOnColor  = RGB(0x0E, 0x96, 0x68);  // сон запрещён
+constexpr COLORREF kDotOffColor = RGB(0x9A, 0x9A, 0x9A);  // сон разрешён
+constexpr int kDotDiameter = 8;  // при масштабе 100 %
+
+// Пустая картинка 32 бита сверху вниз; bits указывает на её пиксели.
+HBITMAP CreateMenuBitmap(int size, UINT32** bits) {
+    BITMAPINFO bmi = {};
+    bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+    bmi.bmiHeader.biWidth = size;
+    bmi.bmiHeader.biHeight = -size;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void* data = nullptr;
+    HBITMAP bitmap = CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &data, nullptr, 0);
+    if (!bitmap) return nullptr;
+    ZeroMemory(data, static_cast<size_t>(size) * size * 4);
+    *bits = static_cast<UINT32*>(data);
+    return bitmap;
+}
+
+// Значок «открытый глаз» нужного размера в виде картинки для меню.
+HBITMAP CreateIconMenuBitmap(UINT dpi) {
+    const int size = GetSystemMetricsForDpi(SM_CXSMICON, dpi);
+    HICON icon = nullptr;
+    if (FAILED(LoadIconWithScaleDown(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_ON),
+                                     size, size, &icon))) {
+        return nullptr;
+    }
+
+    ICONINFO info = {};
+    if (!GetIconInfo(icon, &info)) {
+        DestroyIcon(icon);
+        return nullptr;
+    }
+
+    UINT32* bits = nullptr;
+    HBITMAP bitmap = CreateMenuBitmap(size, &bits);
+    bool ok = false;
+    if (bitmap && info.hbmColor) {
+        BITMAPINFO bmi = {};
+        bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+        bmi.bmiHeader.biWidth = size;
+        bmi.bmiHeader.biHeight = -size;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        HDC dc = GetDC(nullptr);
+        ok = GetDIBits(dc, info.hbmColor, 0, size, bits, &bmi, DIB_RGB_COLORS) == size;
+
+        const int count = size * size;
+        bool hasAlpha = false;
+        for (int i = 0; ok && i < count && !hasAlpha; ++i) {
+            hasAlpha = (bits[i] >> 24) != 0;
+        }
+
+        if (ok && !hasAlpha && info.hbmMask) {
+            // Значок без прозрачности: берём её из маски.
+            UINT32* mask = static_cast<UINT32*>(
+                HeapAlloc(GetProcessHeap(), 0, static_cast<SIZE_T>(count) * 4));
+            if (mask && GetDIBits(dc, info.hbmMask, 0, size, mask, &bmi, DIB_RGB_COLORS) == size) {
+                for (int i = 0; i < count; ++i) {
+                    const UINT32 alpha = (mask[i] & 0x00FFFFFF) ? 0 : 0xFF;
+                    bits[i] = (bits[i] & 0x00FFFFFF) | (alpha << 24);
+                }
+            }
+            if (mask) HeapFree(GetProcessHeap(), 0, mask);
+        }
+        ReleaseDC(nullptr, dc);
+
+        // Меню ждёт цвета, уже умноженные на прозрачность.
+        for (int i = 0; ok && i < count; ++i) {
+            const UINT32 a = bits[i] >> 24;
+            const UINT32 r = ((bits[i] >> 16) & 0xFF) * a / 255;
+            const UINT32 g = ((bits[i] >> 8) & 0xFF) * a / 255;
+            const UINT32 b = (bits[i] & 0xFF) * a / 255;
+            bits[i] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+
+    if (info.hbmColor) DeleteObject(info.hbmColor);
+    if (info.hbmMask) DeleteObject(info.hbmMask);
+    DestroyIcon(icon);
+
+    if (!ok && bitmap) {
+        DeleteObject(bitmap);
+        bitmap = nullptr;
+    }
+    return bitmap;
+}
+
+// Круглая точка по центру картинки размером со значок, со сглаженным краем.
+HBITMAP CreateDotMenuBitmap(UINT dpi, COLORREF color) {
+    const int size = GetSystemMetricsForDpi(SM_CXSMICON, dpi);
+    UINT32* bits = nullptr;
+    HBITMAP bitmap = CreateMenuBitmap(size, &bits);
+    if (!bitmap) return nullptr;
+
+    const double diameter = static_cast<double>(MulDiv(kDotDiameter, dpi, USER_DEFAULT_SCREEN_DPI));
+    const double radius = diameter / 2.0;
+    const double center = size / 2.0;
+    constexpr int kSamples = 4;  // 4×4 точки на пиксель для гладкого края
+
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            int inside = 0;
+            for (int sy = 0; sy < kSamples; ++sy) {
+                for (int sx = 0; sx < kSamples; ++sx) {
+                    const double px = x + (sx + 0.5) / kSamples - center;
+                    const double py = y + (sy + 0.5) / kSamples - center;
+                    if (px * px + py * py <= radius * radius) ++inside;
+                }
+            }
+            const UINT32 a = static_cast<UINT32>(inside * 255 / (kSamples * kSamples));
+            const UINT32 r = GetRValue(color) * a / 255;
+            const UINT32 g = GetGValue(color) * a / 255;
+            const UINT32 b = GetBValue(color) * a / 255;
+            bits[y * size + x] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+    return bitmap;
+}
+
+void SetMenuItemBitmap(HMENU menu, UINT id, HBITMAP bitmap) {
+    if (!bitmap) return;
+    MENUITEMINFOW mii = {};
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_BITMAP;
+    mii.hbmpItem = bitmap;
+    SetMenuItemInfoW(menu, id, FALSE, &mii);
+}
+
+void FreeMenuBitmaps() {
+    if (g_menuIconBitmap) {
+        DeleteObject(g_menuIconBitmap);
+        g_menuIconBitmap = nullptr;
+    }
+    if (g_menuDotBitmap) {
+        DeleteObject(g_menuDotBitmap);
+        g_menuDotBitmap = nullptr;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Контекстное меню
 // ---------------------------------------------------------------------------
 
@@ -709,6 +864,17 @@ HMENU BuildMenu() {
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, ID_EXIT, Str(S_EXIT));
+
+    // Значок у версии и точка у статуса. Галочка и картинка делят одно
+    // место слева, чтобы меню не становилось шире.
+    SetMenuItemBitmap(menu, ID_VERSION, g_menuIconBitmap);
+    SetMenuItemBitmap(menu, ID_STATUS, g_menuDotBitmap);
+
+    MENUINFO info = {};
+    info.cbSize = sizeof(info);
+    info.fMask = MIM_STYLE;
+    info.dwStyle = MNS_CHECKORBMP;
+    SetMenuInfo(menu, &info);
 
     return menu;
 }
@@ -874,6 +1040,18 @@ void HandleCommand(UINT id) {
 }
 
 void ShowTrayMenu(int x, int y) {
+    // Картинки рисуем под масштаб монитора, на котором откроется меню.
+    UINT dpiX = USER_DEFAULT_SCREEN_DPI;
+    UINT dpiY = USER_DEFAULT_SCREEN_DPI;
+    const POINT pt = { x, y };
+    if (FAILED(GetDpiForMonitor(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST),
+                                MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
+        dpiY = USER_DEFAULT_SCREEN_DPI;
+    }
+    FreeMenuBitmaps();
+    g_menuIconBitmap = CreateIconMenuBitmap(dpiY);
+    g_menuDotBitmap = CreateDotMenuBitmap(dpiY, g_awake ? kDotOnColor : kDotOffColor);
+
     HMENU menu = BuildMenu();
 
     // Без этого меню не закрывается при щелчке мимо него.
@@ -888,6 +1066,7 @@ void ShowTrayMenu(int x, int y) {
     g_openMenu = nullptr;
 
     DestroyMenu(menu);
+    FreeMenuBitmaps();
     PostMessageW(g_window, WM_NULL, 0, 0);
 
     if (cmd != 0) HandleCommand(cmd);
