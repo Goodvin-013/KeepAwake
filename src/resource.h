@@ -10,4 +10,4 @@
 // и на ярлыке, поэтому первой идёт зелёная иконка с открытым глазом.
 #define IDI_KEEPAWAKE_ON  101
 #define IDI_KEEPAWAKE_OFF 102
-#define IDI_KEEPAWAKE_ON_DISPLAY 103  // зелёный глаз в синей кайме: сон и экран
+#define IDI_KEEPAWAKE_ON_DISPLAY 103  // синий открытый глаз: сон и экран
