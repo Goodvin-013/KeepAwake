@@ -46,6 +46,17 @@ constexpr UINT kCountdownIntervalMs = 500;
 // При ручном запуске запрет сна включается на 10 часов.
 constexpr int kStartupMinutes = 600;
 
+// Защита батареи: на батарее с зарядом ниже порога запрет сна не держится.
+constexpr BYTE kBatteryLowPercent = 20;
+
+// Уведомления Windows об изменении заряда и источника питания.
+// {A7AD8041-B45A-4CAE-87A3-EECBB468A9E1} — GUID_BATTERY_PERCENTAGE_REMAINING
+// {5D3E9A59-E9D5-4B00-A6BD-FF34FF516548} — GUID_ACDC_POWER_SOURCE
+constexpr GUID kGuidBatteryPercent =
+    { 0xA7AD8041, 0xB45A, 0x4CAE, { 0x87, 0xA3, 0xEE, 0xCB, 0xB4, 0x68, 0xA9, 0xE1 } };
+constexpr GUID kGuidPowerSource =
+    { 0x5D3E9A59, 0xE9D5, 0x4B00, { 0xA6, 0xBD, 0xFF, 0x34, 0xFF, 0x51, 0x65, 0x48 } };
+
 constexpr int kTimerMinutes[] = { 30, 60, 120, 180, 240, 360, 480, 600, 1200 };
 constexpr int kTimerCount = sizeof(kTimerMinutes) / sizeof(kTimerMinutes[0]);
 
@@ -93,6 +104,8 @@ enum StringId {
     S_NOTIFY_TIMER_START_FMT,
     S_NOTIFY_TIMER_DONE,
     S_NOTIFY_TIMER_CANCEL,
+    S_NOTIFY_BATTERY_OFF,
+    S_NOTIFY_BATTERY_BLOCKED,
     S_ERROR_REQUEST,
     S_COUNT
 };
@@ -122,6 +135,8 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Запрет сна включён на %ls. Автоотключение в %ls.",
         L"Таймер завершён. Запрет сна автоматически выключен.",
         L"Таймер отменён. Запрет сна остаётся включённым.",
+        L"Заряд батареи ниже 20 %. Запрет сна выключен.",
+        L"Заряд батареи ниже 20 %. Запрет сна не включён, подключите зарядку.",
         L"Windows не приняла запрос на изменение режима сна.",
     },
     {
@@ -148,6 +163,8 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Sleep blocked for %ls. Turns off at %ls.",
         L"Timer finished. Sleep is allowed again.",
         L"Timer cancelled. Sleep stays blocked.",
+        L"Battery below 20%. Sleep is allowed again.",
+        L"Battery below 20%. Sleep was not blocked. Connect the charger.",
         L"Windows rejected the sleep mode request.",
     },
 };
@@ -433,7 +450,31 @@ bool ApplyAwakeState(bool enable) {
     return true;
 }
 
+// true, если ноутбук работает от батареи и заряд ниже порога.
+// Если источник питания или заряд неизвестны, защита не срабатывает.
+bool BatteryLow() {
+    SYSTEM_POWER_STATUS ps = {};
+    if (!GetSystemPowerStatus(&ps)) return false;
+    if (ps.ACLineStatus != 0) return false;          // 1 — от сети, 255 — неизвестно
+    if (ps.BatteryFlag & 128) return false;          // батареи нет
+    if (ps.BatteryLifePercent == 255) return false;  // заряд неизвестен
+    return ps.BatteryLifePercent < kBatteryLowPercent;
+}
+
+void CheckBattery();
+
 bool SetAwake(bool enable, bool notify) {
+    // На батарее ниже порога запрет сна не включается (в том числе при запуске
+    // программы и по таймеру), об этом всегда сообщает уведомление.
+    if (enable && BatteryLow()) {
+        if (g_awake) {
+            CheckBattery();
+        } else {
+            ShowNotification(Str(S_NOTIFY_BATTERY_BLOCKED));
+        }
+        return false;
+    }
+
     if (!ApplyAwakeState(enable)) return false;
 
     if (notify) {
@@ -470,6 +511,20 @@ void StopTimer(TimerStop how) {
 
     if (wasRunning && how == TimerStop::Cancelled) {
         ShowNotification(Str(S_NOTIFY_TIMER_CANCEL));
+    }
+}
+
+// Защита батареи: снимает запрет сна, если ноутбук перешёл на батарею
+// или заряд упал ниже порога. Обратно запрет сам не включается.
+void CheckBattery() {
+    if (!g_awake || !BatteryLow()) return;
+
+    // Открытое меню показывает устаревшее состояние, закрываем его.
+    if (g_openMenu) EndMenu();
+
+    StopTimer(TimerStop::Silent);
+    if (ApplyAwakeState(false)) {
+        ShowNotification(Str(S_NOTIFY_BATTERY_OFF));
     }
 }
 
@@ -676,6 +731,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (wParam == kCountdownTimerId) OnCountdownTick();
         return 0;
 
+    case WM_POWERBROADCAST:
+        // Сменился источник питания или заряд батареи.
+        CheckBattery();
+        return TRUE;
+
     case WM_ENDSESSION:
         // Выход из Windows или установщик просит закрыть программу.
         if (wParam) DestroyWindow(hwnd);
@@ -728,6 +788,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     LoadIcons();
     AddTrayIcon();
 
+    // Подписываемся на изменения заряда и источника питания для защиты батареи.
+    HPOWERNOTIFY batteryNotify =
+        RegisterPowerSettingNotification(g_window, &kGuidBatteryPercent, DEVICE_NOTIFY_WINDOW_HANDLE);
+    HPOWERNOTIFY powerSourceNotify =
+        RegisterPowerSettingNotification(g_window, &kGuidPowerSource, DEVICE_NOTIFY_WINDOW_HANDLE);
+
     // Ручной запуск включает запрет сна на 10 часов, без уведомления.
     StartTimer(kStartupMinutes, false);
 
@@ -737,6 +803,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         DispatchMessageW(&msg);
     }
 
+    if (batteryNotify) UnregisterPowerSettingNotification(batteryNotify);
+    if (powerSourceNotify) UnregisterPowerSettingNotification(powerSourceNotify);
     FreeIcons();
     ReleaseMutex(mutex);
     CloseHandle(mutex);
