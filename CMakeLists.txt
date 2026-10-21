@@ -22,7 +22,7 @@ set_source_files_properties(src/KeepAwake.rc PROPERTIES OBJECT_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/icons/KeepAwake-On.ico;${CMAKE_CURRENT_SOURCE_DIR}/src/icons/KeepAwake-Off.ico;${CMAKE_CURRENT_SOURCE_DIR}/src/icons/KeepAwake-OnDisplay.ico;${CMAKE_CURRENT_SOURCE_DIR}/src/KeepAwake.manifest")
 
 target_compile_definitions(KeepAwake PRIVATE UNICODE _UNICODE)
-target_link_libraries(KeepAwake PRIVATE comctl32 shell32 advapi32 user32 gdi32 msimg32 uxtheme shcore)
+target_link_libraries(KeepAwake PRIVATE comctl32 shell32 advapi32 user32 gdi32 shcore)
 
 if(MSVC)
     # Исходники в UTF-8; манифест уже вшит через KeepAwake.rc.
