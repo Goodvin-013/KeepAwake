@@ -80,6 +80,7 @@ enum CommandId : UINT {
     ID_EXIT,
     ID_TIMER_UNTIL,
     ID_TIMER_CUSTOM,
+    ID_TIMER_EXTEND,
     ID_TIMER_FIRST = 2000, // ID_TIMER_FIRST + индекс в kTimerMinutes
 };
 
@@ -104,6 +105,7 @@ enum StringId {
     S_TIMER_CANCEL,
     S_TIMER_UNTIL,
     S_TIMER_CUSTOM,
+    S_TIMER_EXTEND,
     S_PICKER_UNTIL_LABEL,
     S_PICKER_CUSTOM_LABEL,
     S_PICKER_OK,
@@ -119,6 +121,7 @@ enum StringId {
     S_NOTIFY_TIMER_START_FMT,
     S_NOTIFY_TIMER_DONE,
     S_NOTIFY_TIMER_CANCEL,
+    S_NOTIFY_TIMER_EXTEND_FMT,
     S_NOTIFY_BATTERY_OFF,
     S_NOTIFY_BATTERY_BLOCKED,
     S_ERROR_REQUEST,
@@ -141,6 +144,7 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Отменить таймер",
         L"До времени…",
         L"Свой интервал…",
+        L"Продлить на 1 час",
         L"Выключить запрет сна в:",
         L"Запрет сна на:",
         L"ОК",
@@ -156,6 +160,7 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Запрет сна включён на %ls. Автоотключение в %ls.",
         L"Таймер завершён. Запрет сна автоматически выключен.",
         L"Таймер отменён. Запрет сна остаётся включённым.",
+        L"Таймер продлён на 1 час. Автоотключение в %ls.",
         L"Заряд батареи ниже 20 %. Запрет сна выключен.",
         L"Заряд батареи ниже 20 %. Запрет сна не включён, подключите зарядку.",
         L"Windows не приняла запрос на изменение режима сна.",
@@ -175,6 +180,7 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Cancel timer",
         L"Until a time…",
         L"Custom interval…",
+        L"Extend by 1 hour",
         L"Allow sleep at:",
         L"Block sleep for:",
         L"OK",
@@ -190,6 +196,7 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"Sleep blocked for %ls. Turns off at %ls.",
         L"Timer finished. Sleep is allowed again.",
         L"Timer cancelled. Sleep stays blocked.",
+        L"Timer extended by 1 hour. Turns off at %ls.",
         L"Battery below 20%. Sleep is allowed again.",
         L"Battery below 20%. Sleep was not blocked. Connect the charger.",
         L"Windows rejected the sleep mode request.",
@@ -598,6 +605,21 @@ void StartTimer(int minutes, bool notify) {
     StartTimerMs(static_cast<ULONGLONG>(minutes) * 60000ULL, notify);
 }
 
+// «Продлить на 1 час»: работает только при идущем таймере.
+void ExtendTimer() {
+    if (!g_timerRunning) return;
+
+    constexpr ULONGLONG kExtendMs = 60ULL * 60000ULL;
+    g_deadlineMs += kExtendMs;
+    UpdateTrayIcon();
+
+    wchar_t endTime[32];
+    wchar_t text[256];
+    FormatEndTime(RemainingMs(), endTime, ARRAYSIZE(endTime));
+    StringCchPrintfW(text, ARRAYSIZE(text), Str(S_NOTIFY_TIMER_EXTEND_FMT), endTime);
+    ShowNotification(text);
+}
+
 void OnCountdownTick() {
     if (!g_timerRunning) return;
 
@@ -678,6 +700,8 @@ HMENU BuildMenu() {
     AppendMenuW(timerMenu, MF_STRING, ID_TIMER_CUSTOM, Str(S_TIMER_CUSTOM));
     AppendMenuW(timerMenu, MF_STRING, ID_TIMER_UNTIL, Str(S_TIMER_UNTIL));
     AppendMenuW(timerMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(timerMenu, MF_STRING | (g_timerRunning ? 0 : MF_GRAYED), ID_TIMER_EXTEND,
+                Str(S_TIMER_EXTEND));
     AppendMenuW(timerMenu, MF_STRING | (g_timerRunning ? 0 : MF_GRAYED), ID_TIMER_CANCEL,
                 Str(S_TIMER_CANCEL));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), Str(S_AUTO_OFF));
@@ -871,6 +895,9 @@ void HandleCommand(UINT id) {
         break;
     case ID_TIMER_CUSTOM:
         ShowCustomPicker();
+        break;
+    case ID_TIMER_EXTEND:
+        ExtendTimer();
         break;
     case ID_LANG_RU:
         SetLanguage(LANG_RU_UI);
