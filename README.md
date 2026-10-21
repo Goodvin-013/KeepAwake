@@ -125,10 +125,10 @@ cmake --build build --config Release
 после сборки exe:
 
 ```powershell
-iscc /DAppVersion=2.3.0 installer\KeepAwake.iss
+iscc /DAppVersion=2.4.0 installer\KeepAwake.iss
 ```
 
-Готовый файл: `build\installer\KeepAwake-Setup-2.3.0.exe`.
+Готовый файл: `build\installer\KeepAwake-Setup-2.4.0.exe`.
 
 Сборка через MinGW-w64 тоже поддерживается.
 
@@ -138,11 +138,11 @@ iscc /DAppVersion=2.3.0 installer\KeepAwake.iss
 
 1. Поменяйте версию в `src/resource.h` (`KA_VERSION_*`) и в
    `src/KeepAwake.manifest`.
-2. Создайте и отправьте тег с той же версией, например `v2.3.0`:
+2. Создайте и отправьте тег с той же версией, например `v2.4.0`:
 
    ```powershell
-   git tag v2.3.0
-   git push origin v2.3.0
+   git tag v2.4.0
+   git push origin v2.4.0
    ```
 
 GitHub соберёт `KeepAwake.exe` и `KeepAwake-Setup-X.Y.Z.exe` и опубликует их

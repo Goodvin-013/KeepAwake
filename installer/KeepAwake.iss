@@ -1,6 +1,6 @@
 ; Установщик KeepAwake (Inno Setup 6).
 ; Ставит программу в профиль текущего пользователя, права администратора не нужны.
-; Сборка: iscc /DAppVersion=2.3.0 installer\KeepAwake.iss
+; Сборка: iscc /DAppVersion=2.4.0 installer\KeepAwake.iss
 ; KeepAwake.exe берётся из build\Release (сборка CMake + MSVC).
 
 #ifndef AppVersion
@@ -51,7 +51,7 @@ Source: "{#ExeSource}"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{autodesktop}\KeepAwake"; Filename: "{app}\KeepAwake.exe"; Tasks: desktopicon
 
 [Code]
-// Номер версии в заголовке окна установки: «Установка — KeepAwake 2.3.0».
+// Номер версии в заголовке окна установки: «Установка — KeepAwake 2.4.0».
 procedure InitializeWizard;
 begin
   WizardForm.Caption := WizardForm.Caption + ' {#AppVersion}';
