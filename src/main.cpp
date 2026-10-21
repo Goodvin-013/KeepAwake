@@ -24,6 +24,9 @@
 #include <commctrl.h>
 #include <wchar.h>
 #include <strsafe.h>
+#include <shellscalingapi.h>
+#include <uxtheme.h>
+#include <vssym32.h>
 
 #include "resource.h"
 
@@ -657,12 +660,123 @@ void ToggleAwake() {
 // Контекстное меню
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Шапка меню: зелёный глаз, «KeepAwake» жирным и номер версии
+// ---------------------------------------------------------------------------
+
+constexpr wchar_t kHeaderName[] = L"KeepAwake";
+constexpr wchar_t kHeaderVersion[] = L"" KA_VERSION_STRING;
+
+UINT g_menuDpi = USER_DEFAULT_SCREEN_DPI;  // масштаб монитора, где открыто меню
+HICON g_menuIcon = nullptr;                // значок для шапки под этот масштаб
+
+int MenuScale(int px) {
+    return MulDiv(px, static_cast<int>(g_menuDpi), USER_DEFAULT_SCREEN_DPI);
+}
+
+// Шрифт меню Windows под масштаб монитора; bold — жирный вариант.
+HFONT CreateMenuFont(bool bold) {
+    NONCLIENTMETRICSW ncm = {};
+    ncm.cbSize = sizeof(ncm);
+    if (!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, g_menuDpi)) {
+        return nullptr;
+    }
+    if (bold) ncm.lfMenuFont.lfWeight = FW_BOLD;
+    return CreateFontIndirectW(&ncm.lfMenuFont);
+}
+
+struct HeaderLayout {
+    int iconSize = 0;
+    int left = 0;     // отступ до значка
+    int gap = 0;      // между значком и названием
+    int space = 0;    // между названием и версией
+    SIZE name = {};
+    SIZE version = {};
+};
+
+HeaderLayout MeasureHeader(HDC dc, HFONT bold, HFONT regular) {
+    HeaderLayout l;
+    l.iconSize = GetSystemMetricsForDpi(SM_CXSMICON, g_menuDpi);
+    l.left = MenuScale(10);
+    l.gap = MenuScale(7);
+    l.space = MenuScale(6);
+
+    HGDIOBJ old = SelectObject(dc, bold);
+    GetTextExtentPoint32W(dc, kHeaderName, ARRAYSIZE(kHeaderName) - 1, &l.name);
+    SelectObject(dc, regular);
+    GetTextExtentPoint32W(dc, kHeaderVersion, ARRAYSIZE(kHeaderVersion) - 1, &l.version);
+    SelectObject(dc, old);
+    return l;
+}
+
+void MeasureMenuHeader(MEASUREITEMSTRUCT* mis) {
+    HFONT bold = CreateMenuFont(true);
+    HFONT regular = CreateMenuFont(false);
+    HDC dc = GetDC(nullptr);
+    const HeaderLayout l = MeasureHeader(dc, bold, regular);
+    ReleaseDC(nullptr, dc);
+    if (bold) DeleteObject(bold);
+    if (regular) DeleteObject(regular);
+
+    const int content = l.left + l.iconSize + l.gap + l.name.cx + l.space + l.version.cx;
+    mis->itemWidth = static_cast<UINT>(content + MenuScale(10));
+    const int textHeight = l.name.cy > l.version.cy ? l.name.cy : l.version.cy;
+    const int inner = textHeight > l.iconSize ? textHeight : l.iconSize;
+    mis->itemHeight = static_cast<UINT>(inner + MenuScale(10));
+}
+
+void DrawMenuHeader(const DRAWITEMSTRUCT* dis) {
+    HDC dc = dis->hDC;
+    const RECT rc = dis->rcItem;
+
+    // Фон и цвет текста берём из темы меню, как у обычных пунктов.
+    // Фон рисуем сами, чтобы при перерисовке текст не накладывался.
+    // Без темы оставляем фон, который нарисовала Windows.
+    COLORREF textColor = GetSysColor(COLOR_MENUTEXT);
+    HWND menuWindow = WindowFromDC(dc);
+    HTHEME theme = menuWindow ? OpenThemeData(menuWindow, L"MENU") : nullptr;
+    if (theme) {
+        RECT menuRect = rc;
+        GetClientRect(menuWindow, &menuRect);
+        DrawThemeBackground(theme, dc, MENU_POPUPBACKGROUND, 0, &menuRect, &rc);
+        GetThemeColor(theme, MENU_POPUPITEM, MPI_NORMAL, TMT_TEXTCOLOR, &textColor);
+        CloseThemeData(theme);
+    }
+
+    HFONT bold = CreateMenuFont(true);
+    HFONT regular = CreateMenuFont(false);
+    const HeaderLayout l = MeasureHeader(dc, bold, regular);
+    const int middle = (rc.top + rc.bottom) / 2;
+
+    int x = rc.left + l.left;
+    if (g_menuIcon) {
+        DrawIconEx(dc, x, middle - l.iconSize / 2, g_menuIcon, l.iconSize, l.iconSize, 0,
+                   nullptr, DI_NORMAL);
+    }
+    x += l.iconSize + l.gap;
+
+    const int oldMode = SetBkMode(dc, TRANSPARENT);
+    const COLORREF oldColor = SetTextColor(dc, textColor);
+    HGDIOBJ oldFont = SelectObject(dc, bold);
+    TextOutW(dc, x, middle - l.name.cy / 2, kHeaderName, ARRAYSIZE(kHeaderName) - 1);
+    x += l.name.cx + l.space;
+    SelectObject(dc, regular);
+    TextOutW(dc, x, middle - l.version.cy / 2, kHeaderVersion, ARRAYSIZE(kHeaderVersion) - 1);
+
+    SelectObject(dc, oldFont);
+    SetTextColor(dc, oldColor);
+    SetBkMode(dc, oldMode);
+    if (bold) DeleteObject(bold);
+    if (regular) DeleteObject(regular);
+}
+
 HMENU BuildMenu() {
     HMENU menu = CreatePopupMenu();
     wchar_t text[128];
 
-    // Название и версия программы, чтобы было видно, какая версия запущена.
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
+    // Шапка: значок, название и версия программы. Рисуем её сами
+    // (DrawMenuHeader), чтобы она не выглядела как недоступный пункт.
+    AppendMenuW(menu, MF_OWNERDRAW | MF_DISABLED, ID_VERSION, nullptr);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_STATUS,
@@ -914,6 +1028,19 @@ void HandleCommand(UINT id) {
 }
 
 void ShowTrayMenu(int x, int y) {
+    // Масштаб монитора, на котором откроется меню, — для шапки.
+    UINT dpiX = USER_DEFAULT_SCREEN_DPI;
+    UINT dpiY = USER_DEFAULT_SCREEN_DPI;
+    const POINT pt = { x, y };
+    if (FAILED(GetDpiForMonitor(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST),
+                                MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
+        dpiY = USER_DEFAULT_SCREEN_DPI;
+    }
+    g_menuDpi = dpiY;
+    const int iconSize = GetSystemMetricsForDpi(SM_CXSMICON, g_menuDpi);
+    LoadIconWithScaleDown(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_ON), iconSize, iconSize,
+                          &g_menuIcon);
+
     HMENU menu = BuildMenu();
 
     // Без этого меню не закрывается при щелчке мимо него.
@@ -928,6 +1055,10 @@ void ShowTrayMenu(int x, int y) {
     g_openMenu = nullptr;
 
     DestroyMenu(menu);
+    if (g_menuIcon) {
+        DestroyIcon(g_menuIcon);
+        g_menuIcon = nullptr;
+    }
     PostMessageW(g_window, WM_NULL, 0, 0);
 
     if (cmd != 0) HandleCommand(cmd);
@@ -972,6 +1103,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         }
         return 0;
+
+    case WM_MEASUREITEM: {
+        auto* mis = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+        if (mis->CtlType == ODT_MENU && mis->itemID == ID_VERSION) {
+            MeasureMenuHeader(mis);
+            return TRUE;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    case WM_DRAWITEM: {
+        const auto* dis = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+        if (dis->CtlType == ODT_MENU && dis->itemID == ID_VERSION) {
+            DrawMenuHeader(dis);
+            return TRUE;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
 
     case WM_HOTKEY:
         if (wParam == kHotkeyId) {
