@@ -11,3 +11,9 @@
 #define IDI_KEEPAWAKE_ON  101
 #define IDI_KEEPAWAKE_OFF 102
 #define IDI_KEEPAWAKE_ON_DISPLAY 103  // синий открытый глаз: сон и экран
+
+// Окно выбора времени «До времени…».
+#define IDD_TIME_PICKER 200
+#define IDC_TIME_LABEL  201
+#define IDC_TIME_VALUE  202
+#define IDC_TIME_SPIN   203
