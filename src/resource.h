@@ -11,6 +11,7 @@
 #define IDI_KEEPAWAKE_ON  101
 #define IDI_KEEPAWAKE_OFF 102
 #define IDI_KEEPAWAKE_ON_DISPLAY 103  // синий открытый глаз: сон и экран
+#define IDI_KEEPAWAKE_SMILE 104       // смайлик: пасхалка по щелчку на версии
 
 // Окно выбора времени «До времени…».
 #define IDD_TIME_PICKER 200
