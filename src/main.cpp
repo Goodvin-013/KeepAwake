@@ -735,14 +735,16 @@ HMENU BuildMenu() {
     wchar_t text[128];
 
     // Название и версия программы, чтобы было видно, какая версия запущена.
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
+    // Информационные строки помечены MF_DISABLED без MF_GRAYED: их нельзя
+    // выбрать, но Windows не выцветает их текст и картинку.
+    AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_STATUS,
+    AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_STATUS,
                 Str(g_awake ? S_STATUS_ON : S_STATUS_OFF));
 
     TimerStatusText(text, ARRAYSIZE(text));
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_TIMER_STATUS, text);
+    AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_TIMER_STATUS, text);
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
