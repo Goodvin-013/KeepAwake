@@ -2,9 +2,9 @@
 
 // Версия программы. Используется в ресурсе версии exe.
 #define KA_VERSION_MAJOR 2
-#define KA_VERSION_MINOR 4
+#define KA_VERSION_MINOR 5
 #define KA_VERSION_PATCH 0
-#define KA_VERSION_STRING "2.4.0"
+#define KA_VERSION_STRING "2.5.0"
 
 // Иконки. Первая по номеру иконка становится иконкой exe в Проводнике
 // и на ярлыке, поэтому первой идёт зелёная иконка с открытым глазом.
