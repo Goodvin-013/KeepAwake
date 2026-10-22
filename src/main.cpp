@@ -113,13 +113,7 @@ enum StringId {
     S_TIP_ON,
     S_TIP_OFF,
     S_TIP_COUNTDOWN_FMT,
-    S_NOTIFY_ON,
-    S_NOTIFY_ON_DISPLAY,
-    S_NOTIFY_OFF,
-    S_NOTIFY_TIMER_START_FMT,
     S_NOTIFY_TIMER_DONE,
-    S_NOTIFY_TIMER_CANCEL,
-    S_NOTIFY_TIMER_EXTEND_FMT,
     S_NOTIFY_BATTERY_OFF,
     S_NOTIFY_BATTERY_BLOCKED,
     S_ERROR_REQUEST,
@@ -150,13 +144,7 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"KeepAwake — сон запрещён",
         L"KeepAwake — сон разрешён",
         L"KeepAwake — %ls",
-        L"Запрет сна включён. Экран может отключаться.",
-        L"Запрет сна включён. Экран не будет отключаться.",
-        L"Запрет сна выключен. Действуют настройки Windows.",
-        L"Запрет сна включён на %ls. Автоотключение в %ls.",
         L"Таймер завершён. Запрет сна автоматически выключен.",
-        L"Таймер отменён. Запрет сна остаётся включённым.",
-        L"Таймер продлён на 1 час. Автоотключение в %ls.",
         L"Заряд батареи ниже 20 %. Запрет сна выключен.",
         L"Заряд батареи ниже 20 %. Запрет сна не включён, подключите зарядку.",
         L"Windows не приняла запрос на изменение режима сна.",
@@ -184,13 +172,7 @@ const wchar_t* const kStrings[2][S_COUNT] = {
         L"KeepAwake — sleep blocked",
         L"KeepAwake — sleep allowed",
         L"KeepAwake — %ls",
-        L"Sleep blocked. The display can still turn off.",
-        L"Sleep blocked. The display will stay on.",
-        L"Sleep allowed. Windows power settings apply.",
-        L"Sleep blocked for %ls. Turns off at %ls.",
         L"Timer finished. Sleep is allowed again.",
-        L"Timer cancelled. Sleep stays blocked.",
-        L"Timer extended by 1 hour. Turns off at %ls.",
         L"Battery below 20%. Sleep is allowed again.",
         L"Battery below 20%. Sleep was not blocked. Connect the charger.",
         L"Windows rejected the sleep mode request.",
@@ -312,31 +294,6 @@ void FormatRemaining(ULONGLONG remainingMs, wchar_t* out, size_t outCount) {
     const unsigned seconds = static_cast<unsigned>(totalSeconds % 60);
 
     StringCchPrintfW(out, outCount, L"%02u:%02u:%02u", hours, minutes, seconds);
-}
-
-// Время окончания таймера по часам Windows, например 23:15:00.
-void FormatEndTime(ULONGLONG durationMs, wchar_t* out, int outCount) {
-    SYSTEMTIME now = {};
-    GetLocalTime(&now);
-
-    FILETIME ft = {};
-    SystemTimeToFileTime(&now, &ft);
-
-    ULARGE_INTEGER t;
-    t.LowPart = ft.dwLowDateTime;
-    t.HighPart = ft.dwHighDateTime;
-    t.QuadPart += durationMs * 10000ULL;  // FILETIME считает в единицах по 100 нс
-    ft.dwLowDateTime = t.LowPart;
-    ft.dwHighDateTime = t.HighPart;
-
-    SYSTEMTIME end = {};
-    FileTimeToSystemTime(&ft, &end);
-
-    if (GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &end, L"HH':'mm':'ss",
-                        out, outCount) == 0) {
-        StringCchPrintfW(out, static_cast<size_t>(outCount), L"%02u:%02u:%02u",
-                 end.wHour, end.wMinute, end.wSecond);
-    }
 }
 
 ULONGLONG RemainingMs() {
@@ -510,7 +467,10 @@ bool BatteryLow() {
 
 void CheckBattery();
 
-bool SetAwake(bool enable, bool notify) {
+// Уведомления показываем только о том, что произошло без участия
+// пользователя: таймер закончился, села батарея, батарея не дала включить
+// запрет. О действиях, выбранных самим пользователем, не сообщаем.
+bool SetAwake(bool enable) {
     // На батарее ниже порога запрет сна не включается (в том числе при запуске
     // программы и по таймеру), об этом всегда сообщает уведомление.
     if (enable && BatteryLow()) {
@@ -522,24 +482,12 @@ bool SetAwake(bool enable, bool notify) {
         return false;
     }
 
-    if (!ApplyAwakeState(enable)) return false;
-
-    if (notify) {
-        if (enable) {
-            ShowNotification(Str(g_keepDisplay ? S_NOTIFY_ON_DISPLAY : S_NOTIFY_ON));
-        } else {
-            ShowNotification(Str(S_NOTIFY_OFF));
-        }
-    }
-
-    return true;
+    return ApplyAwakeState(enable);
 }
 
-enum class TimerStop { Expired, Cancelled, Silent };
+enum class TimerStop { Expired, Silent };
 
 void StopTimer(TimerStop how) {
-    const bool wasRunning = g_timerRunning;
-
     KillTimer(g_window, kCountdownTimerId);
     g_timerRunning = false;
     g_deadlineMs = 0;
@@ -548,17 +496,13 @@ void StopTimer(TimerStop how) {
         // Открытое меню показывает устаревшее состояние, закрываем его.
         if (g_openMenu) EndMenu();
 
-        if (SetAwake(false, false)) {
+        if (SetAwake(false)) {
             ShowNotification(Str(S_NOTIFY_TIMER_DONE));
         }
         return;
     }
 
     UpdateTrayIcon();
-
-    if (wasRunning && how == TimerStop::Cancelled) {
-        ShowNotification(Str(S_NOTIFY_TIMER_CANCEL));
-    }
 }
 
 // Защита батареи: снимает запрет сна, если ноутбук перешёл на батарею
@@ -575,30 +519,17 @@ void CheckBattery() {
     }
 }
 
-void StartTimerMs(ULONGLONG durationMs, bool notify) {
-    if (!SetAwake(true, false)) return;
+void StartTimerMs(ULONGLONG durationMs) {
+    if (!SetAwake(true)) return;
 
     g_deadlineMs = GetTickCount64() + durationMs;
     g_timerRunning = true;
     SetTimer(g_window, kCountdownTimerId, kCountdownIntervalMs, nullptr);
     UpdateTrayIcon();
-
-    if (notify) {
-        wchar_t duration[32];
-        wchar_t endTime[32];
-        wchar_t text[256];
-
-        // Длительность округляем до минуты вверх: 2 ч 14 мин 30 с → 2 ч 15 мин.
-        FormatDuration(static_cast<int>((durationMs + 59999ULL) / 60000ULL),
-                       duration, ARRAYSIZE(duration));
-        FormatEndTime(durationMs, endTime, ARRAYSIZE(endTime));
-        StringCchPrintfW(text, ARRAYSIZE(text), Str(S_NOTIFY_TIMER_START_FMT), duration, endTime);
-        ShowNotification(text);
-    }
 }
 
-void StartTimer(int minutes, bool notify) {
-    StartTimerMs(static_cast<ULONGLONG>(minutes) * 60000ULL, notify);
+void StartTimer(int minutes) {
+    StartTimerMs(static_cast<ULONGLONG>(minutes) * 60000ULL);
 }
 
 // «Продлить на 1 час»: работает только при идущем таймере.
@@ -608,12 +539,6 @@ void ExtendTimer() {
     constexpr ULONGLONG kExtendMs = 60ULL * 60000ULL;
     g_deadlineMs += kExtendMs;
     UpdateTrayIcon();
-
-    wchar_t endTime[32];
-    wchar_t text[256];
-    FormatEndTime(RemainingMs(), endTime, ARRAYSIZE(endTime));
-    StringCchPrintfW(text, ARRAYSIZE(text), Str(S_NOTIFY_TIMER_EXTEND_FMT), endTime);
-    ShowNotification(text);
 }
 
 void OnCountdownTick() {
@@ -643,9 +568,9 @@ void ToggleKeepDisplay() {
 void ToggleAwake() {
     if (g_awake) {
         StopTimer(TimerStop::Silent);
-        SetAwake(false, true);
+        SetAwake(false);
     } else {
-        SetAwake(true, true);
+        SetAwake(true);
     }
 }
 
@@ -990,7 +915,7 @@ void ShowUntilPicker() {
     LONGLONG durationMs = picker.value * 60000LL - nowMs;
     if (durationMs <= 0) durationMs += kMinutesPerDay * 60000LL;
 
-    StartTimerMs(static_cast<ULONGLONG>(durationMs), true);
+    StartTimerMs(static_cast<ULONGLONG>(durationMs));
 }
 
 void SetLanguage(Lang lang) {
@@ -1001,23 +926,23 @@ void SetLanguage(Lang lang) {
 
 void HandleCommand(UINT id) {
     if (id >= ID_TIMER_FIRST && id < ID_TIMER_FIRST + kTimerCount) {
-        StartTimer(kTimerMinutes[id - ID_TIMER_FIRST], true);
+        StartTimer(kTimerMinutes[id - ID_TIMER_FIRST]);
         return;
     }
 
     switch (id) {
     case ID_ENABLE:
-        SetAwake(true, true);
+        SetAwake(true);
         break;
     case ID_DISABLE:
         StopTimer(TimerStop::Silent);
-        SetAwake(false, true);
+        SetAwake(false);
         break;
     case ID_KEEP_DISPLAY:
         ToggleKeepDisplay();
         break;
     case ID_TIMER_CANCEL:
-        StopTimer(TimerStop::Cancelled);
+        StopTimer(TimerStop::Silent);
         break;
     case ID_TIMER_UNTIL:
         ShowUntilPicker();
@@ -1192,7 +1117,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         RegisterPowerSettingNotification(g_window, &kGuidPowerSource, DEVICE_NOTIFY_WINDOW_HANDLE);
 
     // Ручной запуск включает запрет сна на 10 часов, без уведомления.
-    StartTimer(kStartupMinutes, false);
+    StartTimer(kStartupMinutes);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
