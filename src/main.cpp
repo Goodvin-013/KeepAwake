@@ -44,6 +44,10 @@ constexpr UINT kTrayIconId = 1;
 constexpr UINT_PTR kCountdownTimerId = 1;
 constexpr UINT kCountdownIntervalMs = 500;
 
+// Пасхалка: щелчок по строке с версией на 3 секунды меняет значок на смайлик.
+constexpr UINT_PTR kSmileTimerId = 2;
+constexpr UINT kSmileDurationMs = 3000;
+
 // Горячая клавиша Ctrl+Alt+K включает и выключает запрет сна,
 // как двойной щелчок по значку.
 constexpr int kHotkeyId = 1;
@@ -190,6 +194,8 @@ UINT g_taskbarCreatedMsg = 0;
 HICON g_iconOn = nullptr;
 HICON g_iconOff = nullptr;
 HICON g_iconOnDisplay = nullptr;  // запрет сна + «Не выключать экран»
+HICON g_iconSmile = nullptr;      // пасхалка
+bool g_showSmile = false;         // сейчас в трее смайлик
 
 Lang g_lang = LANG_EN_UI;
 
@@ -319,9 +325,11 @@ void FreeIcons() {
     if (g_iconOn) DestroyIcon(g_iconOn);
     if (g_iconOff) DestroyIcon(g_iconOff);
     if (g_iconOnDisplay) DestroyIcon(g_iconOnDisplay);
+    if (g_iconSmile) DestroyIcon(g_iconSmile);
     g_iconOn = nullptr;
     g_iconOff = nullptr;
     g_iconOnDisplay = nullptr;
+    g_iconSmile = nullptr;
 }
 
 // LoadIconMetric берёт из .ico кадр нужного размера под текущий масштаб
@@ -332,11 +340,13 @@ void LoadIcons() {
     LoadIconMetric(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_OFF), LIM_SMALL, &g_iconOff);
     LoadIconMetric(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_ON_DISPLAY), LIM_SMALL,
                    &g_iconOnDisplay);
+    LoadIconMetric(g_instance, MAKEINTRESOURCEW(IDI_KEEPAWAKE_SMILE), LIM_SMALL, &g_iconSmile);
 }
 
 // Серый глаз — сон разрешён, зелёный — запрещён,
 // синий — запрещены и сон, и выключение экрана.
 HICON CurrentIcon() {
+    if (g_showSmile && g_iconSmile) return g_iconSmile;
     if (!g_awake) return g_iconOff;
     return g_keepDisplay ? g_iconOnDisplay : g_iconOn;
 }
@@ -381,6 +391,19 @@ void UpdateTrayIcon() {
     nid.hIcon = CurrentIcon();
     FillTip(nid.szTip, ARRAYSIZE(nid.szTip));
     Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
+// Пасхалка: смайлик в трее на 3 секунды. Повторный щелчок продлевает показ.
+void ShowSmile() {
+    g_showSmile = true;
+    UpdateTrayIcon();
+    SetTimer(g_window, kSmileTimerId, kSmileDurationMs, nullptr);
+}
+
+void HideSmile() {
+    KillTimer(g_window, kSmileTimerId);
+    g_showSmile = false;
+    UpdateTrayIcon();
 }
 
 void ShowNotification(const wchar_t* text) {
@@ -738,7 +761,8 @@ HMENU BuildMenu() {
     // Информационные строки сделаны обычными пунктами без действия: любые
     // неактивные пункты Windows 11 выцветает вместе с картинкой, а так текст
     // остаётся тёмным, а значок и точка цветными. Щелчок по ним только
-    // закрывает меню (HandleCommand их пропускает).
+    // закрывает меню (HandleCommand их пропускает; щелчок по версии
+    // показывает пасхалку).
     AppendMenuW(menu, MF_STRING, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
@@ -960,6 +984,9 @@ void HandleCommand(UINT id) {
     case ID_LANG_EN:
         SetLanguage(LANG_EN_UI);
         break;
+    case ID_VERSION:
+        ShowSmile();
+        break;
     case ID_EXIT:
         DestroyWindow(g_window);
         break;
@@ -1051,6 +1078,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_TIMER:
         if (wParam == kCountdownTimerId) OnCountdownTick();
+        if (wParam == kSmileTimerId) HideSmile();
         return 0;
 
     case WM_POWERBROADCAST:
