@@ -735,16 +735,18 @@ HMENU BuildMenu() {
     wchar_t text[128];
 
     // Название и версия программы, чтобы было видно, какая версия запущена.
-    // Информационные строки помечены MF_DISABLED без MF_GRAYED: их нельзя
-    // выбрать, но Windows не выцветает их текст и картинку.
-    AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
+    // Информационные строки сделаны обычными пунктами без действия: любые
+    // неактивные пункты Windows 11 выцветает вместе с картинкой, а так текст
+    // остаётся тёмным, а значок и точка цветными. Щелчок по ним только
+    // закрывает меню (HandleCommand их пропускает).
+    AppendMenuW(menu, MF_STRING, ID_VERSION, L"KeepAwake " KA_VERSION_STRING);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_STATUS,
+    AppendMenuW(menu, MF_STRING, ID_STATUS,
                 Str(g_awake ? S_STATUS_ON : S_STATUS_OFF));
 
     TimerStatusText(text, ARRAYSIZE(text));
-    AppendMenuW(menu, MF_STRING | MF_DISABLED, ID_TIMER_STATUS, text);
+    AppendMenuW(menu, MF_STRING, ID_TIMER_STATUS, text);
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
